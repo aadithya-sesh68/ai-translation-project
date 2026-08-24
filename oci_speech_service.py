@@ -1,4 +1,4 @@
-"""Reusable OCI Speech Realtime and OCI Language session support."""
+"""Reusable OCI Speech Realtime and OCI Language API-key support."""
 
 from __future__ import annotations
 
@@ -17,7 +17,6 @@ from oci.ai_language.models import (
     TextDocument,
 )
 from oci.ai_speech.models import RealtimeParameters
-from oci.auth.signers.security_token_signer import SecurityTokenSigner
 from oci_ai_speech_realtime import (
     RealtimeSpeechClient,
     RealtimeSpeechClientListener,
@@ -47,13 +46,10 @@ class OciSpeechSettings:
         )
         profile_name = os.environ.get(
             "OCI_CONFIG_PROFILE",
-            "SpeechRealtime",
+            "DEFAULT",
         )
 
-        config = oci.config.from_file(
-            file_location=config_file,
-            profile_name=profile_name,
-        )
+        config = load_api_key_config(config_file, profile_name)
 
         compartment_id = os.environ.get("OCI_COMPARTMENT_ID", "").strip()
         if not compartment_id:
@@ -75,36 +71,84 @@ class OciSpeechSettings:
         )
 
 
-def create_security_token_signer(config: dict[str, str]) -> SecurityTokenSigner:
-    """Load the configured token and key without logging either value."""
-
-    with open(
-        config["security_token_file"],
-        "r",
-        encoding="utf-8",
-    ) as token_file:
-        token = token_file.readline().strip()
-
-    private_key = oci.signer.load_private_key_from_file(config["key_file"])
-
-    return SecurityTokenSigner(
-        token=token,
-        private_key=private_key,
-    )
-
-
-def create_session_language_client(
-    settings: OciSpeechSettings,
-) -> AIServiceLanguageClient:
-    """Create an OCI Language client with the session-token profile."""
+def load_api_key_config(
+    config_file: str,
+    profile_name: str,
+    region: str | None = None,
+) -> dict[str, str]:
+    """Load and validate a persistent OCI API-key profile."""
 
     config = oci.config.from_file(
-        file_location=settings.config_file,
-        profile_name=settings.profile_name,
+        file_location=config_file,
+        profile_name=profile_name,
     )
-    config["region"] = settings.region
-    signer = create_security_token_signer(config)
+
+    if config.get("security_token_file") or config.get(
+        "authentication_type"
+    ):
+        raise ValueError(
+            f"OCI profile '{profile_name}' is not an API-key profile. "
+            "Select a profile containing tenancy, user, fingerprint, "
+            "key_file, and region without session-token settings."
+        )
+
+    if region:
+        config["region"] = region
+
+    oci.config.validate_config(config)
+    return config
+
+
+def create_api_key_signer(config: dict[str, str]) -> oci.signer.Signer:
+    """Create the explicit OCI request signer used by Speech and Language."""
+
+    return oci.signer.Signer(
+        tenancy=config["tenancy"],
+        user=config["user"],
+        fingerprint=config["fingerprint"],
+        private_key_file_location=config.get("key_file"),
+        pass_phrase=oci.config.get_config_value_or_default(
+            config,
+            "pass_phrase",
+        ),
+        private_key_content=config.get("key_content"),
+    )
+
+
+def create_api_key_language_client(
+    settings: OciSpeechSettings,
+) -> AIServiceLanguageClient:
+    """Create an OCI Language client with the explicit API-key signer."""
+
+    config = load_api_key_config(
+        settings.config_file,
+        settings.profile_name,
+        settings.region,
+    )
+    signer = create_api_key_signer(config)
     return AIServiceLanguageClient(config=config, signer=signer)
+
+
+def create_api_key_realtime_client(
+    settings: OciSpeechSettings,
+    config: dict[str, str],
+    signer: oci.signer.Signer,
+    parameters: RealtimeParameters,
+    listener: RealtimeSpeechClientListener,
+) -> RealtimeSpeechClient:
+    """Create Realtime Speech with the same explicit API-key signer."""
+
+    return RealtimeSpeechClient(
+        config=config,
+        realtime_speech_parameters=parameters,
+        listener=listener,
+        service_endpoint=(
+            f"wss://realtime.aiservice.{settings.region}."
+            "oci.oraclecloud.com"
+        ),
+        signer=signer,
+        compartment_id=settings.compartment_id,
+    )
 
 
 def safe_error_details(error: Exception, stage: str) -> dict[str, Any]:
@@ -138,7 +182,7 @@ async def run_translation_reliability_test(
 ) -> None:
     """Translate each sentence once and stream request-level diagnostics."""
 
-    language_client = create_session_language_client(settings)
+    language_client = create_api_key_language_client(settings)
     work_queue: asyncio.Queue[tuple[int, str] | None] = asyncio.Queue()
     result_codes: Counter[str] = Counter()
     test_started = time.perf_counter()
@@ -430,13 +474,33 @@ class SpeechTranslationListener(RealtimeSpeechClientListener):
             await self.translation_worker_task
 
     def on_close(self, error_code: int, error_message: str) -> None:
-        self._publish(
-            {
-                "type": "session_status",
-                "state": "speech_closed",
-                "message": f"OCI Speech connection closed ({error_code}).",
-            }
-        )
+        status_event = {
+            "type": "session_status",
+            "state": "speech_closed",
+            "message": f"OCI Speech connection closed ({error_code}).",
+        }
+        self._publish(status_event)
+
+        if error_code == 1000:
+            return
+
+        details = {
+            "type": "error",
+            "stage": "speech",
+            "status": error_code,
+            "code": "WEBSOCKET_CLOSED",
+            "message": (
+                f"OCI Speech connection closed ({error_code}): "
+                f"{error_message or 'no reason returned'}"
+            ),
+        }
+
+        def record_close_error() -> None:
+            self.last_speech_error = details
+            self.failed.set()
+            self.event_sink(details)
+
+        self.event_loop.call_soon_threadsafe(record_close_error)
 
 
 class SpeechTranslationSession:
@@ -456,12 +520,12 @@ class SpeechTranslationSession:
         self._stopped = False
 
     async def start(self) -> None:
-        config = oci.config.from_file(
-            file_location=self.settings.config_file,
-            profile_name=self.settings.profile_name,
+        config = load_api_key_config(
+            self.settings.config_file,
+            self.settings.profile_name,
+            self.settings.region,
         )
-        config["region"] = self.settings.region
-        signer = create_security_token_signer(config)
+        signer = create_api_key_signer(config)
 
         language_client = AIServiceLanguageClient(
             config=config,
@@ -487,16 +551,12 @@ class SpeechTranslationSession:
         parameters.encoding = "audio/raw;rate=16000"
         parameters.is_ack_enabled = False
 
-        self.client = RealtimeSpeechClient(
+        self.client = create_api_key_realtime_client(
+            settings=self.settings,
             config=config,
-            realtime_speech_parameters=parameters,
-            listener=self.listener,
-            service_endpoint=(
-                f"wss://realtime.aiservice.{self.settings.region}."
-                "oci.oraclecloud.com"
-            ),
             signer=signer,
-            compartment_id=self.settings.compartment_id,
+            parameters=parameters,
+            listener=self.listener,
         )
 
         self.connection_task = asyncio.create_task(self.client.connect())

@@ -124,8 +124,8 @@ def parse_arguments() -> TestSettings:
     )
     parser.add_argument(
         "--profile",
-        default=os.environ.get("OCI_CONFIG_PROFILE", "SpeechRealtime"),
-        help="OCI config profile (default: OCI_CONFIG_PROFILE or SpeechRealtime)",
+        default=os.environ.get("OCI_CONFIG_PROFILE", "DEFAULT"),
+        help="OCI config profile (default: OCI_CONFIG_PROFILE or DEFAULT)",
     )
     parser.add_argument(
         "--auth",

@@ -191,6 +191,7 @@ def process_http_request(
             settings = OciSpeechSettings.from_environment()
             payload: dict[str, Any] = {
                 "status": "ok",
+                "authentication": "api_key",
                 "region": settings.region,
                 "profile": settings.profile_name,
             }

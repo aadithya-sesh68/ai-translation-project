@@ -12,6 +12,7 @@ From the project directory:
 
 ```powershell
 python -m pip install -r requirements.txt
+$env:OCI_CONFIG_PROFILE = 'DEFAULT'
 $env:OCI_COMPARTMENT_ID = 'ocid1.compartment.oc1..replace_with_yours'
 python speech_web_server.py
 ```
@@ -22,7 +23,8 @@ select **End session** to flush the final segment and save the outputs.
 
 The defaults match this prototype:
 
-- OCI profile: `SpeechRealtime`
+- OCI authentication: persistent API-key signing
+- OCI profile: `DEFAULT`
 - OCI region: `us-phoenix-1` (or the profile's region)
 - Translation grouping window: 1.5 seconds
 - Web server: `127.0.0.1:8765`
@@ -31,7 +33,7 @@ The defaults match this prototype:
 window are optional:
 
 ```powershell
-$env:OCI_CONFIG_PROFILE = 'SpeechRealtime'
+$env:OCI_CONFIG_PROFILE = 'DEFAULT'
 $env:OCI_REGION = 'us-phoenix-1'
 $env:OCI_COMPARTMENT_ID = 'ocid1.compartment.oc1..replace_with_yours'
 $env:TRANSLATION_BUFFER_SECONDS = '1.5'
@@ -40,9 +42,45 @@ $env:SPEECH_WEB_ALLOWED_ORIGINS = 'http://localhost:8080,https://speech.customer
 $env:SESSION_STORAGE_DIR = 'C:\path\to\persistent\recorded_sessions'
 ```
 
-Do not put security tokens, private keys, or their contents in these variables.
-The server reads the token and key paths from the OCI config profile and never
-sends those values to the browser.
+The selected profile must be an API-key profile containing `tenancy`, `user`,
+`fingerprint`, `key_file`, and `region`. Profiles containing
+`security_token_file` or `authentication_type` are rejected so the application
+cannot accidentally fall back to temporary session authentication.
+
+The server creates one explicit `oci.signer.Signer` from the profile and passes
+that signer to both OCI Speech Realtime and OCI Language. Do not put private
+keys or their contents in environment variables or source files. The server
+reads the private-key path from the OCI config profile and never sends
+credentials to the browser.
+
+For a dedicated deployment identity, set `OCI_CONFIG_PROFILE=API-USER` after
+that profile has been added to the OCI config. The profile name itself is not
+special; it must reference the API signing key uploaded for the intended OCI
+user. The application currently defaults to the existing `DEFAULT` API-key
+profile and will refuse the temporary `SpeechRealtime` profile.
+
+## API-key IAM requirements
+
+The API-key user must belong to an IAM group authorized for both services in
+the exact compartment passed through `OCI_COMPARTMENT_ID`. Ask the tenancy
+administrator to confirm policies equivalent to the following, using the real
+group and compartment names:
+
+```text
+allow group <api-key-user-group> to manage ai-service-speech-family in compartment <compartment-name>
+allow group <api-key-user-group> to use ai-service-language-family in compartment <compartment-name>
+```
+
+An API key can be valid while a service still returns
+`404 NotAuthorizedOrNotFound` for an unauthorized compartment. Realtime Speech
+can surface the same authorization problem as WebSocket close code `1008` with
+`AUTHENTICATION_FAILURE`. Confirm the profile's user group, both policies, and
+the compartment together; changing only the signer cannot grant IAM access.
+
+API signing keys don't have the short lifetime of OCI CLI session tokens.
+However, a long-running customer session must still handle ordinary network,
+browser, proxy, or service WebSocket disconnections. Automatic reconnection is
+not yet implemented in this prototype.
 
 ## Request flow
 
@@ -118,8 +156,8 @@ capture from a remote browser requires a trusted HTTPS certificate.
 Open <http://localhost:8765/translation-test.html> in a separate browser tab to
 test OCI Language without microphone audio or Speech Realtime. The page starts
 with 30 English sentences and sends each sentence as a separate
-`batch_language_translation` request using the same `SpeechRealtime` session
-profile and compartment as the live app.
+`batch_language_translation` request using the same API-key profile and
+compartment as the live app.
 
 Start with concurrency `1` and a `250 ms` pause to establish a sequential
 baseline. Then compare runs with concurrency `2`, `3`, or `5`. Each request is
