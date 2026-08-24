@@ -23,6 +23,8 @@ recorded_sessions/
 *.mp3
 *.wav
 *.log
+oci-language-test-*.json
+oci-language-reliability-*.json
 
 # Editor and operating-system files
 .idea/
