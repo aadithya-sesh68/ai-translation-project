@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Live English to French</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">OCI Speech Realtime + OCI Language</p>
+          <h1>Live English to French</h1>
+          <p class="lede">
+            Speak naturally. Your browser sends raw microphone audio to the
+            local server for transcription and translation.
+          </p>
+        </div>
+        <div class="session-controls">
+          <label for="session-title">Session name</label>
+          <input
+            id="session-title"
+            type="text"
+            maxlength="120"
+            placeholder="For example, OCI customer session"
+          />
+          <div class="controls">
+            <button id="start-button" class="primary" type="button">
+              Start session
+            </button>
+            <button id="stop-button" type="button" disabled>
+              End session
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <section class="status-panel" aria-live="polite">
+        <span id="status-badge" data-state="idle">idle</span>
+        <p id="status-message">Ready to start a local live session.</p>
+      </section>
+
+      <div class="results-grid">
+        <section class="result-panel" aria-labelledby="english-heading">
+          <div class="panel-heading">
+            <div>
+              <span class="step">01</span>
+              <h2 id="english-heading">English transcript</h2>
+            </div>
+            <span class="live-marker">Live</span>
+          </div>
+          <div id="transcript-list" class="result-list" aria-live="polite">
+            <p id="empty-transcript" class="empty-state">
+              Your English speech will appear here as a paragraph.
+            </p>
+          </div>
+        </section>
+
+        <section class="result-panel" aria-labelledby="french-heading">
+          <div class="panel-heading">
+            <div>
+              <span class="step">02</span>
+              <h2 id="french-heading">French translation</h2>
+            </div>
+            <span class="buffer-note">1.5 s grouping</span>
+          </div>
+          <div id="translation-list" class="result-list" aria-live="polite">
+            <p id="empty-translation" class="empty-state">
+              The French translation will appear here as a paragraph.
+            </p>
+          </div>
+        </section>
+      </div>
+
+      <section class="session-library" aria-labelledby="library-heading">
+        <div class="library-heading">
+          <div>
+            <p class="eyebrow">Saved locally</p>
+            <h2 id="library-heading">Session recordings</h2>
+            <p>
+              Select a completed session to play its recording and review the
+              saved English and French text.
+            </p>
+          </div>
+          <button id="refresh-sessions" type="button">Refresh sessions</button>
+        </div>
+
+        <div class="library-grid">
+          <div id="session-list" class="session-list">
+            <p id="empty-sessions" class="empty-state">
+              Completed sessions will appear here.
+            </p>
+          </div>
+
+          <article id="session-viewer" class="session-viewer">
+            <p id="empty-viewer" class="empty-state">
+              Choose a session to see its saved outputs.
+            </p>
+            <div id="session-detail" hidden>
+              <div class="viewer-heading">
+                <div>
+                  <span id="saved-session-status" class="saved-status"></span>
+                  <h3 id="saved-session-title"></h3>
+                  <p id="saved-session-meta"></p>
+                </div>
+              </div>
+
+              <div id="saved-audio-panel" class="saved-audio">
+                <audio id="saved-audio" controls preload="metadata"></audio>
+              </div>
+
+              <div class="download-links">
+                <a id="download-audio" download>Download MP3</a>
+                <a id="download-english" download>Download English text</a>
+                <a id="download-french" download>Download French text</a>
+                <button id="delete-session" class="danger-action" type="button">
+                  Delete saved session
+                </button>
+              </div>
+
+              <section class="saved-text" aria-labelledby="saved-english-heading">
+                <h4 id="saved-english-heading">English transcript</h4>
+                <p id="saved-english"></p>
+              </section>
+              <section class="saved-text french-saved" aria-labelledby="saved-french-heading">
+                <h4 id="saved-french-heading">French translation</h4>
+                <p id="saved-french" lang="fr"></p>
+              </section>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <footer>
+        <p>
+          OCI credentials stay on this computer and are never sent to the
+          browser. Session audio and text are stored by this local server. Use
+          headphones to reduce echo.
+        </p>
+        <a
+          class="utility-link"
+          href="/translation-test.html"
+          target="_blank"
+          rel="noopener"
+        >
+          Open translation reliability test
+        </a>
+      </footer>
+    </main>
+    <script src="/app.js" defer></script>
+  </body>
+</html>

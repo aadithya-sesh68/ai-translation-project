@@ -1,0 +1,60 @@
+# HTTPS Nginx template for a shared Linux server.
+# Replace the REPLACE_* values before copying this file into /etc/nginx/conf.d.
+
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+upstream oci_speech_python {
+    server 127.0.0.1:8765;
+    keepalive 32;
+}
+
+server {
+    listen 80;
+    server_name REPLACE_PUBLIC_HOSTNAME;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name REPLACE_PUBLIC_HOSTNAME;
+
+    ssl_certificate REPLACE_TLS_CERTIFICATE_PATH;
+    ssl_certificate_key REPLACE_TLS_PRIVATE_KEY_PATH;
+
+    # Add the customer's SSO/authentication controls here before public use.
+    # For a simple internal proof, Nginx auth_basic can be used temporarily.
+
+    location /ws/ {
+        proxy_pass http://oci_speech_python;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Port $server_port;
+        proxy_buffering off;
+        proxy_request_buffering off;
+        proxy_read_timeout 24h;
+        proxy_send_timeout 24h;
+        proxy_socket_keepalive on;
+        proxy_next_upstream off;
+    }
+
+    location / {
+        proxy_pass http://oci_speech_python;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Port $server_port;
+        proxy_buffering off;
+    }
+}

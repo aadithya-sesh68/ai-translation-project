@@ -1,0 +1,31 @@
+__pycache__/
+*.py[cod]
+
+# Local Python environments and test output
+.venv/
+venv/
+env/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local configuration and OCI credential material
+.env
+.env.*
+!.env.example
+.oci/
+*.pem
+*.key
+*security_token*
+
+# Session recordings and generated runtime output
+recorded_sessions/
+*.mp3
+*.wav
+*.log
+
+# Editor and operating-system files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

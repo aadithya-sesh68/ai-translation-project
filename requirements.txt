@@ -1,0 +1,4 @@
+oci>=2.184.2,<3
+oci-ai-speech-realtime>=2.2.0,<3
+websockets>=17.0.1,<18
+soundfile>=0.13.1,<1
