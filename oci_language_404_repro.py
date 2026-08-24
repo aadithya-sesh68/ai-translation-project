@@ -3,8 +3,8 @@
 
 This file is standalone apart from the OCI Python SDK. It deliberately disables
 SDK retries so every report entry represents one BatchLanguageTranslation API
-request. It never prints or writes private keys, security tokens, fingerprints,
-or request headers.
+request. It uses persistent API-key signing and never prints or writes private
+keys, fingerprints, or request headers.
 
 Examples (PowerShell):
 
@@ -38,7 +38,6 @@ from oci.ai_language.models import (
     BatchLanguageTranslationDetails,
     TextDocument,
 )
-from oci.auth.signers.security_token_signer import SecurityTokenSigner
 
 
 SENTENCES = [
@@ -94,7 +93,6 @@ def non_negative_int(value: str) -> int:
 class TestSettings:
     config_file: str
     profile_name: str
-    auth_mode: str
     region: str
     compartment_id: str
     tenancy_name: str | None
@@ -126,12 +124,6 @@ def parse_arguments() -> TestSettings:
         "--profile",
         default=os.environ.get("OCI_CONFIG_PROFILE", "DEFAULT"),
         help="OCI config profile (default: OCI_CONFIG_PROFILE or DEFAULT)",
-    )
-    parser.add_argument(
-        "--auth",
-        choices=("auto", "security_token", "api_key"),
-        default="auto",
-        help="Authentication type; auto detects the profile type (default: auto)",
     )
     parser.add_argument(
         "--region",
@@ -189,7 +181,6 @@ def parse_arguments() -> TestSettings:
     return TestSettings(
         config_file=str(Path(args.config_file).expanduser()),
         profile_name=args.profile,
-        auth_mode=args.auth,
         region=args.region,
         compartment_id=compartment_id,
         tenancy_name=(args.tenancy_name or "").strip() or None,
@@ -203,8 +194,8 @@ def parse_arguments() -> TestSettings:
 
 def create_language_client(
     settings: TestSettings,
-) -> tuple[AIServiceLanguageClient, str, bool | None]:
-    """Create a Language client without exposing authentication material."""
+) -> tuple[AIServiceLanguageClient, bool | None]:
+    """Create an explicitly signed API-key Language client."""
 
     config = oci.config.from_file(
         file_location=settings.config_file,
@@ -212,43 +203,33 @@ def create_language_client(
     )
     config["region"] = settings.region
 
-    profile_has_session_token = bool(config.get("security_token_file"))
-    auth_mode = settings.auth_mode
-    if auth_mode == "auto":
-        auth_mode = "security_token" if profile_has_session_token else "api_key"
+    if config.get("security_token_file") or config.get("authentication_type"):
+        raise ValueError(
+            f"OCI profile '{settings.profile_name}' is not an API-key profile. "
+            "Select a profile containing tenancy, user, fingerprint, key_file, "
+            "and region without session-token settings."
+        )
 
-    if auth_mode == "security_token":
-        if not profile_has_session_token:
-            raise ValueError(
-                "The selected profile does not contain security_token_file, "
-                "so it cannot use security-token authentication."
-            )
-        token_path = config.get("security_token_file")
-        key_path = config.get("key_file")
-        if not token_path or not key_path:
-            raise ValueError(
-                "The session-token profile must contain security_token_file "
-                "and key_file paths."
-            )
-        with open(token_path, "r", encoding="utf-8") as token_file:
-            token = token_file.readline().strip()
-        private_key = oci.signer.load_private_key_from_file(key_path)
-        signer = SecurityTokenSigner(token=token, private_key=private_key)
-        client = AIServiceLanguageClient(config=config, signer=signer)
-    else:
-        if profile_has_session_token:
-            raise ValueError(
-                "The selected profile is a session-token profile. Choose an "
-                "API-key profile or use --auth security_token."
-            )
-        client = AIServiceLanguageClient(config=config)
+    oci.config.validate_config(config)
+    signer = oci.signer.Signer(
+        tenancy=config["tenancy"],
+        user=config["user"],
+        fingerprint=config["fingerprint"],
+        private_key_file_location=config.get("key_file"),
+        pass_phrase=oci.config.get_config_value_or_default(
+            config,
+            "pass_phrase",
+        ),
+        private_key_content=config.get("key_content"),
+    )
+    client = AIServiceLanguageClient(config=config, signer=signer)
 
     profile_tenancy = config.get("tenancy")
     tenancy_matches: bool | None = None
     if settings.tenancy_id and profile_tenancy:
         tenancy_matches = settings.tenancy_id == profile_tenancy
 
-    return client, auth_mode, tenancy_matches
+    return client, tenancy_matches
 
 
 def safe_service_error(error: Exception) -> dict[str, Any]:
@@ -414,7 +395,7 @@ def print_result(result: dict[str, Any]) -> None:
 
 
 def run(settings: TestSettings) -> int:
-    client, resolved_auth_mode, tenancy_matches = create_language_client(settings)
+    client, tenancy_matches = create_language_client(settings)
     expected_requests = (
         None if settings.loops == 0 else settings.loops * len(SENTENCES)
     )
@@ -434,7 +415,7 @@ def run(settings: TestSettings) -> int:
         "compartment_id": settings.compartment_id,
         "authentication": {
             "profile_name": settings.profile_name,
-            "type": resolved_auth_mode,
+            "type": "api_key",
         },
         "settings": {
             "sentence_count": len(SENTENCES),
@@ -453,7 +434,7 @@ def run(settings: TestSettings) -> int:
 
     print("OCI Language repeated translation diagnostic")
     print(f"Region: {settings.region}")
-    print(f"Profile: {settings.profile_name} ({resolved_auth_mode})")
+    print(f"Profile: {settings.profile_name} (api_key)")
     print(f"Sentences per loop: {len(SENTENCES)}")
     print(
         "Loops: until Ctrl+C" if settings.loops == 0 else f"Loops: {settings.loops}"

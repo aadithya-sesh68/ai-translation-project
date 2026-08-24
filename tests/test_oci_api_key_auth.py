@@ -7,6 +7,9 @@ import os
 import unittest
 from unittest.mock import Mock, patch
 
+from oci_language_404_repro import (
+    create_language_client as create_diagnostic_language_client,
+)
 from oci_speech_service import (
     OciSpeechSettings,
     SpeechTranslationListener,
@@ -53,7 +56,7 @@ class OciApiKeyAuthenticationTest(unittest.TestCase):
             return_value=session_config,
         ):
             with self.assertRaisesRegex(ValueError, "not an API-key profile"):
-                load_api_key_config("config-file", "SpeechRealtime")
+                load_api_key_config("config-file", "TEMPORARY-SESSION")
 
     def test_explicit_signer_uses_api_key_fields(self) -> None:
         signer = Mock(name="signer")
@@ -190,6 +193,71 @@ class OciApiKeyAuthenticationTest(unittest.TestCase):
             "AUTHENTICATION_FAILURE",
             listener.last_speech_error["message"],
         )
+
+    def test_diagnostic_uses_explicit_api_key_signer(self) -> None:
+        settings = Mock(
+            config_file="config-file",
+            profile_name="API-USER",
+            region="us-phoenix-1",
+            tenancy_id="tenancy-ocid",
+        )
+        signer = Mock(name="signer")
+        language_client = Mock(name="language-client")
+
+        with (
+            patch(
+                "oci_language_404_repro.oci.config.from_file",
+                return_value=dict(API_CONFIG),
+            ),
+            patch("oci_language_404_repro.oci.config.validate_config"),
+            patch(
+                "oci_language_404_repro.oci.config.get_config_value_or_default",
+                return_value=None,
+            ),
+            patch(
+                "oci_language_404_repro.oci.signer.Signer",
+                return_value=signer,
+            ) as signer_type,
+            patch(
+                "oci_language_404_repro.AIServiceLanguageClient",
+                return_value=language_client,
+            ) as client_type,
+        ):
+            actual_client, tenancy_matches = create_diagnostic_language_client(
+                settings
+            )
+
+        self.assertIs(language_client, actual_client)
+        self.assertTrue(tenancy_matches)
+        signer_type.assert_called_once_with(
+            tenancy="tenancy-ocid",
+            user="user-ocid",
+            fingerprint="fingerprint",
+            private_key_file_location="private-key.pem",
+            pass_phrase=None,
+            private_key_content=None,
+        )
+        client_type.assert_called_once_with(
+            config={**API_CONFIG, "region": "us-phoenix-1"},
+            signer=signer,
+        )
+
+    def test_diagnostic_rejects_session_token_profile(self) -> None:
+        settings = Mock(
+            config_file="config-file",
+            profile_name="TEMPORARY-SESSION",
+            region="us-phoenix-1",
+            tenancy_id=None,
+        )
+        session_config = dict(API_CONFIG)
+        session_config["security_token_file"] = "temporary-token"
+
+        with patch(
+            "oci_language_404_repro.oci.config.from_file",
+            return_value=session_config,
+        ):
+            with self.assertRaisesRegex(ValueError, "not an API-key profile"):
+                create_diagnostic_language_client(settings)
 
 
 if __name__ == "__main__":

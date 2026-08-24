@@ -56,8 +56,8 @@ credentials to the browser.
 For a dedicated deployment identity, set `OCI_CONFIG_PROFILE=API-USER` after
 that profile has been added to the OCI config. The profile name itself is not
 special; it must reference the API signing key uploaded for the intended OCI
-user. The application currently defaults to the existing `DEFAULT` API-key
-profile and will refuse the temporary `SpeechRealtime` profile.
+user. The application defaults to the existing `DEFAULT` API-key profile and
+rejects profiles that contain temporary session-token settings.
 
 ## API-key IAM requirements
 
