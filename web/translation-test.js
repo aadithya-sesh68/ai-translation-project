@@ -31,6 +31,8 @@ const DEFAULT_SENTENCES = [
   "Thank you for completing the OCI Language reliability test.",
 ];
 
+const { websocketUrl } = window.oraTranslateUrls;
+
 const sentencesInput = document.querySelector("#sentences");
 const concurrencyInput = document.querySelector("#concurrency");
 const delayInput = document.querySelector("#delay-ms");
@@ -224,10 +226,7 @@ function ensureSocket() {
   }
 
   return new Promise((resolve, reject) => {
-    const protocol = location.protocol === "https:" ? "wss:" : "ws:";
-    socket = new WebSocket(
-      `${protocol}//${location.host}/ws/translation-test`,
-    );
+    socket = new WebSocket(websocketUrl("/ws/translation-test"));
     socket.onopen = () => resolve(socket);
     socket.onmessage = (message) => {
       handleServerEvent(JSON.parse(message.data));

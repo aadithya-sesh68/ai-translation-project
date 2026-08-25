@@ -5,6 +5,7 @@ const statusBadge = document.querySelector("#status-badge");
 const statusMessage = document.querySelector("#status-message");
 const transcriptList = document.querySelector("#transcript-list");
 const translationList = document.querySelector("#translation-list");
+const currentFrenchCaption = document.querySelector("#current-french-caption");
 const emptyTranscript = document.querySelector("#empty-transcript");
 const emptyTranslation = document.querySelector("#empty-translation");
 const refreshSessionsButton = document.querySelector("#refresh-sessions");
@@ -24,6 +25,8 @@ const deleteSessionButton = document.querySelector("#delete-session");
 const savedEnglish = document.querySelector("#saved-english");
 const savedFrench = document.querySelector("#saved-french");
 const SESSION_RESULTS_KEY = "oci-speech-results-v1";
+const FRENCH_CAPTION_PLACEHOLDER = "La traduction française apparaîtra ici.";
+const { applicationPath, websocketUrl } = window.oraTranslateUrls;
 
 let socket = null;
 let mediaStream = null;
@@ -72,6 +75,8 @@ function resetResults(clearStoredResults = true) {
   transcriptParagraph = null;
   translationParagraph = null;
   diagnosticEvents = [];
+  currentFrenchCaption.textContent = FRENCH_CAPTION_PLACEHOLDER;
+  currentFrenchCaption.classList.add("waiting-caption");
 
   if (clearStoredResults) {
     try {
@@ -131,6 +136,14 @@ function appendTranscript(text, isFinal) {
 
 function renderTranslation() {
   emptyTranslation.hidden = true;
+
+  const latestTranslation = frenchSegments.at(-1);
+  currentFrenchCaption.textContent =
+    latestTranslation || FRENCH_CAPTION_PLACEHOLDER;
+  currentFrenchCaption.classList.toggle(
+    "waiting-caption",
+    !latestTranslation,
+  );
 
   if (!translationParagraph) {
     translationParagraph = document.createElement("p");
@@ -292,7 +305,7 @@ async function selectSession(sessionId) {
 
   try {
     const response = await fetch(
-      `/api/sessions/${encodeURIComponent(sessionId)}`,
+      applicationPath(`/api/sessions/${encodeURIComponent(sessionId)}`),
       { cache: "no-store" },
     );
     if (!response.ok) {
@@ -313,8 +326,8 @@ async function selectSession(sessionId) {
     savedAudioPanel.hidden = !session.audio_available;
     downloadAudio.hidden = !session.audio_available;
     if (session.audio_available) {
-      savedAudio.src = session.audio_url;
-      downloadAudio.href = session.audio_url;
+      savedAudio.src = applicationPath(session.audio_url);
+      downloadAudio.href = applicationPath(session.audio_url);
     } else {
       savedAudio.pause();
       savedAudio.removeAttribute("src");
@@ -322,8 +335,8 @@ async function selectSession(sessionId) {
       downloadAudio.removeAttribute("href");
     }
 
-    downloadEnglish.href = session.english_url;
-    downloadFrench.href = session.french_url;
+    downloadEnglish.href = applicationPath(session.english_url);
+    downloadFrench.href = applicationPath(session.french_url);
     savedEnglish.textContent =
       session.english_text || "No English transcript was captured.";
     savedFrench.textContent =
@@ -376,7 +389,9 @@ function renderSessionList(sessions, preferredSessionId) {
 async function loadSessions(preferredSessionId = null) {
   refreshSessionsButton.disabled = true;
   try {
-    const response = await fetch("/api/sessions", { cache: "no-store" });
+    const response = await fetch(applicationPath("/api/sessions"), {
+      cache: "no-store",
+    });
     if (!response.ok) {
       throw new Error("Saved sessions could not be loaded.");
     }
@@ -414,7 +429,7 @@ async function deleteSelectedSession() {
 
   try {
     const response = await fetch(
-      `/api/sessions/${encodeURIComponent(sessionId)}`,
+      applicationPath(`/api/sessions/${encodeURIComponent(sessionId)}`),
       { method: "DELETE" },
     );
     if (!response.ok) {
@@ -432,7 +447,9 @@ async function deleteSelectedSession() {
 }
 
 async function beginAudioCapture(sampleRate) {
-  await audioContext.audioWorklet.addModule("/audio-worklet.js");
+  await audioContext.audioWorklet.addModule(
+    applicationPath("/audio-worklet.js"),
+  );
   await audioContext.resume();
 
   mediaSource = audioContext.createMediaStreamSource(mediaStream);
@@ -536,8 +553,7 @@ async function startSession() {
       },
     });
 
-    const protocol = location.protocol === "https:" ? "wss:" : "ws:";
-    socket = new WebSocket(`${protocol}//${location.host}/ws/live`);
+    socket = new WebSocket(websocketUrl("/ws/live"));
     socket.binaryType = "arraybuffer";
 
     socket.onopen = () => {

@@ -40,6 +40,7 @@ STATIC_FILES = {
     "/app.js": WEB_ROOT / "app.js",
     "/audio-worklet.js": WEB_ROOT / "audio-worklet.js",
     "/styles.css": WEB_ROOT / "styles.css",
+    "/url-utils.js": WEB_ROOT / "url-utils.js",
     "/translation-test.html": WEB_ROOT / "translation-test.html",
     "/translation-test.js": WEB_ROOT / "translation-test.js",
     "/translation-test.css": WEB_ROOT / "translation-test.css",
@@ -186,7 +187,7 @@ def process_http_request(
     if api_response is not None:
         return api_response
 
-    if path == "/api/health":
+    if path in {"/health", "/api/health"}:
         try:
             settings = OciSpeechSettings.from_environment()
             payload: dict[str, Any] = {
@@ -500,8 +501,16 @@ async def handle_websocket(websocket: ServerConnection) -> None:
 
 
 async def main() -> None:
-    host = os.environ.get("SPEECH_WEB_HOST", "127.0.0.1")
-    port = int(os.environ.get("SPEECH_WEB_PORT", "8765"))
+    host = os.environ.get(
+        "SPEECH_WEB_HOST",
+        os.environ.get("ORATRANSLATE_HOST", "127.0.0.1"),
+    )
+    port = int(
+        os.environ.get(
+            "SPEECH_WEB_PORT",
+            os.environ.get("ORATRANSLATE_PORT", "8765"),
+        )
+    )
     allowed_origins = allowed_websocket_origins(port)
 
     print(f"OCI Speech web app: http://localhost:{port}")

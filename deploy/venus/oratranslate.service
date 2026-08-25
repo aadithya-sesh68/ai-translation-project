@@ -1,0 +1,30 @@
+[Unit]
+Description=OraTranslate live speech translation application
+Wants=network-online.target
+After=network-online.target home.mount
+RequiresMountsFor=/home/adi/oratranslate
+
+[Service]
+Type=simple
+User=adi
+Group=adi
+WorkingDirectory=/home/adi/oratranslate
+Environment=HOME=/home/adi
+Environment=PYTHONUNBUFFERED=1
+Environment=ORATRANSLATE_HOST=127.0.0.1
+Environment=ORATRANSLATE_PORT=8010
+Environment=ORATRANSLATE_BASE_PATH=/OraTranslate
+EnvironmentFile=/home/adi/.config/oratranslate.env
+ExecStartPre=/usr/bin/test -x /home/adi/oratranslate/run-oratranslate.sh
+ExecStart=/usr/bin/bash /home/adi/oratranslate/run-oratranslate.sh
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=60s
+KillSignal=SIGTERM
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target

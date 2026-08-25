@@ -505,6 +505,229 @@ footer p {
   text-underline-offset: 0.2em;
 }
 
+.app-header {
+  align-items: center;
+  padding-bottom: 1.35rem;
+}
+
+.app-header h1 {
+  font-size: clamp(2.5rem, 5vw, 4.35rem);
+}
+
+.app-header .lede {
+  margin-top: 0.75rem;
+  font-size: 1rem;
+}
+
+.caption-stage {
+  display: flex;
+  min-height: clamp(340px, 46vh, 540px);
+  margin-top: 1rem;
+  overflow: hidden;
+  flex-direction: column;
+  border: 1px solid #173b30;
+  border-radius: 28px;
+  color: #f8fbf9;
+  background:
+    radial-gradient(circle at 92% 8%, rgb(55 123 98 / 35%), transparent 32rem),
+    linear-gradient(145deg, #102c23 0%, #0a211a 100%);
+  box-shadow: 0 28px 70px rgb(16 44 35 / 24%);
+}
+
+.caption-stage-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.25rem 1.5rem;
+  border-bottom: 1px solid rgb(255 255 255 / 14%);
+}
+
+.caption-stage-heading > div {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+}
+
+.caption-stage-heading h2 {
+  color: #f8fbf9;
+  font-family: inherit;
+  font-size: 1rem;
+  font-weight: 750;
+  letter-spacing: 0.01em;
+}
+
+.caption-stage .live-marker {
+  color: #cde1d9;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.caption-stage .live-marker::before {
+  background: #ff7a52;
+  box-shadow: 0 0 0 5px rgb(255 122 82 / 14%);
+}
+
+.caption-language {
+  padding: 0.35rem 0.7rem;
+  border: 1px solid rgb(255 255 255 / 18%);
+  border-radius: 999px;
+  color: #dbece5;
+  font-size: 0.76rem;
+  font-weight: 750;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.current-french-caption {
+  display: flex;
+  min-height: 0;
+  margin: 0;
+  padding: clamp(2rem, 5vw, 4rem);
+  overflow-y: auto;
+  flex: 1;
+  align-items: center;
+  color: #fffdf8;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: clamp(2.4rem, 4.7vw, 5rem);
+  font-weight: 500;
+  letter-spacing: -0.025em;
+  line-height: 1.13;
+  text-wrap: balance;
+}
+
+.current-french-caption.waiting-caption {
+  color: #a9c1b8;
+  font-size: clamp(1.7rem, 3vw, 2.7rem);
+  font-style: italic;
+}
+
+.history-panel,
+.source-panel {
+  margin-top: 1rem;
+  overflow: hidden;
+  border: 1px solid #d7d1c5;
+  border-radius: 20px;
+  background: rgb(255 253 248 / 82%);
+  box-shadow: 0 14px 36px rgb(56 49 39 / 7%);
+}
+
+.history-heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.2rem 1.4rem;
+  border-bottom: 1px solid #ddd7ca;
+}
+
+.history-heading .eyebrow {
+  margin-bottom: 0.3rem;
+}
+
+.history-heading h2 {
+  font-size: 1.55rem;
+}
+
+.french-history {
+  max-height: 300px;
+  padding: 0.25rem 1.4rem 1.15rem;
+}
+
+.french-history .french-text {
+  color: #123f34;
+  font-size: clamp(1.25rem, 2vw, 1.65rem);
+  line-height: 1.65;
+}
+
+.source-panel > summary,
+.library-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.15rem 1.4rem;
+  list-style: none;
+  cursor: pointer;
+}
+
+.source-panel > summary::-webkit-details-marker,
+.library-summary::-webkit-details-marker {
+  display: none;
+}
+
+.source-panel > summary:focus-visible,
+.library-summary:focus-visible {
+  outline: 3px solid #d88d32;
+  outline-offset: -3px;
+}
+
+.source-panel > summary > span:first-child,
+.library-summary > span:first-child {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.source-panel summary strong,
+.library-summary strong {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 1.2rem;
+  font-weight: 500;
+}
+
+.source-panel summary small,
+.library-summary small {
+  color: #707772;
+  font-size: 0.78rem;
+}
+
+.disclosure-label {
+  color: #124e40;
+  font-size: 0.78rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.source-panel[open] > summary,
+.session-library[open] > .library-summary {
+  border-bottom: 1px solid #ddd7ca;
+}
+
+.disclosure-label .when-open,
+.source-panel[open] > summary .when-closed,
+.session-library[open] > .library-summary .when-closed {
+  display: none;
+}
+
+.source-panel[open] > summary .when-open,
+.session-library[open] > .library-summary .when-open {
+  display: inline;
+}
+
+.source-transcript {
+  max-height: 230px;
+  padding: 0.35rem 1.4rem 1rem;
+  background: #f8f5ed;
+}
+
+.source-transcript .continuous-text {
+  color: #4f5853;
+  font-size: 0.95rem;
+  line-height: 1.65;
+}
+
+.session-library {
+  margin-top: 1rem;
+}
+
+.library-summary .eyebrow {
+  display: block;
+  margin: 0 0 0.15rem;
+  font-family: inherit;
+  font-size: 0.68rem;
+}
+
 @media (max-width: 760px) {
   .shell {
     padding-top: 2rem;
@@ -514,6 +737,38 @@ footer p {
     align-items: stretch;
     flex-direction: column;
     gap: 1.5rem;
+  }
+
+  .caption-stage {
+    min-height: 360px;
+    border-radius: 22px;
+  }
+
+  .caption-stage-heading {
+    padding: 1rem;
+  }
+
+  .current-french-caption {
+    padding: 1.5rem;
+    font-size: clamp(2rem, 9vw, 3.3rem);
+  }
+
+  .history-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    padding: 1rem;
+  }
+
+  .french-history,
+  .source-transcript {
+    padding-right: 1rem;
+    padding-left: 1rem;
+  }
+
+  .source-panel > summary,
+  .library-summary {
+    align-items: flex-start;
+    padding: 1rem;
   }
 
   .session-controls {

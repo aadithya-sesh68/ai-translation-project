@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 import unittest
 from unittest.mock import patch
 
@@ -37,6 +38,21 @@ class ProxyConfigurationTest(unittest.TestCase):
         ):
             with self.assertRaises(ValueError):
                 allowed_websocket_origins(8765)
+
+    def test_venus_proxy_preserves_long_websocket_sessions(self) -> None:
+        config_path = (
+            Path(__file__).parents[1]
+            / "deploy"
+            / "venus"
+            / "oratranslate.nginx.conf"
+        )
+        config = config_path.read_text(encoding="utf-8")
+
+        self.assertIn("proxy_pass http://127.0.0.1:8010/;", config)
+        self.assertIn("proxy_set_header Upgrade $http_upgrade;", config)
+        self.assertIn('proxy_set_header Connection "upgrade";', config)
+        self.assertIn("proxy_read_timeout 24h;", config)
+        self.assertIn("proxy_send_timeout 24h;", config)
 
 
 if __name__ == "__main__":

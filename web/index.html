@@ -3,21 +3,20 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Live English to French</title>
-    <link rel="stylesheet" href="/styles.css" />
+    <title>OraTranslate Live</title>
+    <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
     <main class="shell">
-      <header class="hero">
-        <div>
-          <p class="eyebrow">OCI Speech Realtime + OCI Language</p>
-          <h1>Live English to French</h1>
+      <header class="hero app-header">
+        <div class="brand-block">
+          <p class="eyebrow">Live interpretation · English to French</p>
+          <h1>OraTranslate Live</h1>
           <p class="lede">
-            Speak naturally. Your browser sends raw microphone audio to the
-            local server for transcription and translation.
+            Clear French captions for every live session.
           </p>
         </div>
-        <div class="session-controls">
+        <div class="session-controls" aria-label="Session controls">
           <label for="session-title">Session name</label>
           <input
             id="session-title"
@@ -41,46 +40,85 @@
         <p id="status-message">Ready to start a local live session.</p>
       </section>
 
-      <div class="results-grid">
-        <section class="result-panel" aria-labelledby="english-heading">
-          <div class="panel-heading">
-            <div>
-              <span class="step">01</span>
-              <h2 id="english-heading">English transcript</h2>
-            </div>
+      <section class="caption-stage" aria-labelledby="french-caption-heading">
+        <div class="caption-stage-heading">
+          <div>
             <span class="live-marker">Live</span>
+            <h2 id="french-caption-heading">French captions</h2>
           </div>
-          <div id="transcript-list" class="result-list" aria-live="polite">
-            <p id="empty-transcript" class="empty-state">
-              Your English speech will appear here as a paragraph.
-            </p>
-          </div>
-        </section>
+          <span class="caption-language" lang="fr">Français</span>
+        </div>
+        <p
+          id="current-french-caption"
+          class="current-french-caption waiting-caption"
+          lang="fr"
+          aria-live="polite"
+          aria-atomic="true"
+        >
+          La traduction française apparaîtra ici.
+        </p>
+      </section>
 
-        <section class="result-panel" aria-labelledby="french-heading">
-          <div class="panel-heading">
-            <div>
-              <span class="step">02</span>
-              <h2 id="french-heading">French translation</h2>
-            </div>
-            <span class="buffer-note">1.5 s grouping</span>
+      <section class="history-panel" aria-labelledby="french-history-heading">
+        <div class="history-heading">
+          <div>
+            <p class="eyebrow">Session so far</p>
+            <h2 id="french-history-heading">French transcript</h2>
           </div>
-          <div id="translation-list" class="result-list" aria-live="polite">
-            <p id="empty-translation" class="empty-state">
-              The French translation will appear here as a paragraph.
-            </p>
-          </div>
-        </section>
-      </div>
+          <span class="buffer-note">Updated throughout the session</span>
+        </div>
+        <div
+          id="translation-list"
+          class="result-list french-history"
+          aria-live="polite"
+        >
+          <p id="empty-translation" class="empty-state">
+            The complete French transcript will build here as the speaker talks.
+          </p>
+        </div>
+      </section>
 
-      <section class="session-library" aria-labelledby="library-heading">
+      <details class="source-panel">
+        <summary>
+          <span>
+            <strong>English source</strong>
+            <small>Available for reference</small>
+          </span>
+          <span class="disclosure-label">
+            <span class="when-closed">Show transcript</span>
+            <span class="when-open">Hide transcript</span>
+          </span>
+        </summary>
+        <div
+          id="transcript-list"
+          class="result-list source-transcript"
+          aria-live="polite"
+        >
+          <p id="empty-transcript" class="empty-state">
+            The English source transcript will appear here.
+          </p>
+        </div>
+      </details>
+
+      <details class="session-library" id="session-library">
+        <summary class="library-summary">
+          <span>
+            <span class="eyebrow">On demand</span>
+            <strong id="library-heading">Session recordings</strong>
+            <small>Play recordings and review saved French and English text.</small>
+          </span>
+          <span class="disclosure-label">
+            <span class="when-closed">Open library</span>
+            <span class="when-open">Close library</span>
+          </span>
+        </summary>
+
         <div class="library-heading">
           <div>
-            <p class="eyebrow">Saved locally</p>
-            <h2 id="library-heading">Session recordings</h2>
+            <h2>Saved sessions</h2>
             <p>
-              Select a completed session to play its recording and review the
-              saved English and French text.
+              Select a completed session to play its recording or download its
+              transcript and translation.
             </p>
           </div>
           <button id="refresh-sessions" type="button">Refresh sessions</button>
@@ -123,24 +161,27 @@
                 <h4 id="saved-english-heading">English transcript</h4>
                 <p id="saved-english"></p>
               </section>
-              <section class="saved-text french-saved" aria-labelledby="saved-french-heading">
+              <section
+                class="saved-text french-saved"
+                aria-labelledby="saved-french-heading"
+              >
                 <h4 id="saved-french-heading">French translation</h4>
                 <p id="saved-french" lang="fr"></p>
               </section>
             </div>
           </article>
         </div>
-      </section>
+      </details>
 
       <footer>
         <p>
-          OCI credentials stay on this computer and are never sent to the
-          browser. Session audio and text are stored by this local server. Use
-          headphones to reduce echo.
+          OCI credentials stay on the server and are never sent to the browser.
+          Session audio and text are stored by the server. Use headphones to
+          reduce echo.
         </p>
         <a
           class="utility-link"
-          href="/translation-test.html"
+          href="translation-test.html"
           target="_blank"
           rel="noopener"
         >
@@ -148,6 +189,7 @@
         </a>
       </footer>
     </main>
-    <script src="/app.js" defer></script>
+    <script src="url-utils.js" defer></script>
+    <script src="app.js" defer></script>
   </body>
 </html>

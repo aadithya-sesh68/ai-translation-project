@@ -139,6 +139,12 @@ the complete path locally at <http://localhost:8080>. Use
 as the starting point for an HTTPS shared server. Exact Windows and shared-host
 steps are in [`deploy/nginx/README.md`](deploy/nginx/README.md).
 
+The Venus-specific deployment uses the existing `127.0.0.1:8010` service and
+publishes the app beneath `/OraTranslate/`. Its versioned startup, systemd,
+Nginx, and environment templates are in [`deploy/venus`](deploy/venus). The
+frontend derives HTTP and WebSocket URLs from the page location, so the same
+build works at both the local root and the Venus path prefix.
+
 Keep the Python service bound to `127.0.0.1` when Nginx runs on the same host.
 Set `SPEECH_WEB_ALLOWED_ORIGINS` to every exact public browser origin; wildcard
 origins are intentionally unsupported. A remote deployment must use HTTPS for
