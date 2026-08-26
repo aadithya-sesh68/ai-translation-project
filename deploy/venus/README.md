@@ -11,7 +11,8 @@ OraTranslate remains bound to `127.0.0.1:8010`. Nginx publishes it at
 - The OCI user must be authorized for Speech Realtime and Language in the
   configured compartment.
 - A complete, browser-trusted TLS certificate chain on the public Nginx server.
-- Administrator help to install/reload systemd and Nginx configuration.
+- The existing Nginx route must preserve WebSocket upgrades and long-lived
+  connections. Administrator help is needed only if that route must change.
 
 Do not copy an OCI private key into source control, a deployment archive, the
 environment file, terminal output, or chat.
@@ -22,6 +23,8 @@ Upload the project into `/home/adi/oratranslate-next`, then run:
 
 ```bash
 cd /home/adi/oratranslate-next
+export UV_PYTHON_INSTALL_DIR="$HOME/.local/share/uv/python"
+/usr/local/bin/uv python install 3.13
 /usr/local/bin/uv venv --python 3.13 .venv
 /usr/local/bin/uv pip install --python .venv/bin/python -r requirements.txt
 
@@ -49,30 +52,39 @@ curl -i --max-time 5 http://127.0.0.1:8011/
 Stop the staged process with Ctrl+C after validation. Port 8011 is used only
 for this check and doesn't disturb the placeholder on port 8010.
 
-## Activation
+## Current activation with user-managed scripts
 
-Activation should be performed with the administrator because the current
-`adi` account cannot modify systemd or Nginx without sudo authorization.
+The current Venus deployment uses a PID file and `nohup`, so `adi` can perform
+the cutover without sudo. Preserve the placeholder directory, move the staged
+release to `/home/adi/oratranslate`, rebuild its virtual environment at the
+final path, and install the versioned scripts:
 
-1. Preserve `/home/adi/oratranslate` as a timestamped rollback directory.
-2. Move the staged release to `/home/adi/oratranslate`.
-3. Copy `deploy/venus/run-oratranslate.sh` to the project root and make it
-   executable.
-4. Create `/home/adi/.config/oratranslate.env` from the example with mode 600.
-5. Install `deploy/venus/oratranslate.service` in
-   `/etc/systemd/system/oratranslate.service`.
-6. Replace the installed OraTranslate Nginx location include with
-   `deploy/venus/oratranslate.nginx.conf`.
-7. Run `nginx -t`, reload Nginx, reload systemd, and restart OraTranslate.
+```bash
+cp deploy/venus/start-oratranslate.sh start-oratranslate.sh
+cp deploy/venus/stop-oratranslate.sh stop-oratranslate.sh
+chmod 700 start-oratranslate.sh stop-oratranslate.sh
+./start-oratranslate.sh
+```
+
+The start script sources `/home/adi/.config/oratranslate.env`, launches
+`speech_web_server.py` with the project virtual environment, records its PID,
+and waits for `/health`. The stop script checks both the PID and exact command
+before sending `SIGTERM`.
 
 Validate both layers after activation:
 
 ```bash
 curl -i --max-time 5 http://127.0.0.1:8010/health
 curl -i --max-time 10 https://venus.aisandbox.ugbu.oraclepdemos.com/OraTranslate/health
-systemctl status oratranslate --no-pager -l
 ```
 
 Finally, use a browser that trusts the HTTPS certificate to validate microphone
 permission, live English transcription, French translation, End session, MP3
 playback, text downloads, refresh persistence, and saved-session deletion.
+
+## Future Supervisor activation
+
+`deploy/venus/run-oratranslate.sh` keeps the server in the foreground for the
+planned Supervisor deployment. `deploy/venus/oratranslate.service` remains a
+reference for a possible systemd deployment; neither managed-process template
+is needed while the user-managed start and stop scripts are active.

@@ -54,6 +54,35 @@ class ProxyConfigurationTest(unittest.TestCase):
         self.assertIn("proxy_read_timeout 24h;", config)
         self.assertIn("proxy_send_timeout 24h;", config)
 
+    def test_venus_user_scripts_launch_and_guard_the_live_server(self) -> None:
+        deployment_dir = (
+            Path(__file__).parents[1] / "deploy" / "venus"
+        )
+        start_script = (
+            deployment_dir / "start-oratranslate.sh"
+        ).read_text(encoding="utf-8")
+        stop_script = (
+            deployment_dir / "stop-oratranslate.sh"
+        ).read_text(encoding="utf-8")
+
+        expected_command = (
+            'expected_command="$python_bin $server_script"'
+        )
+        self.assertIn(expected_command, start_script)
+        self.assertIn(expected_command, stop_script)
+        self.assertIn(
+            'server_script="$project_dir/speech_web_server.py"',
+            start_script,
+        )
+        self.assertIn(
+            '/usr/bin/nohup "$python_bin" "$server_script"',
+            start_script,
+        )
+        self.assertIn('source "$environment_file"', start_script)
+        self.assertIn('kill -TERM "$running_pid"', stop_script)
+        self.assertNotIn("uv run main.py", start_script)
+        self.assertNotIn("uv run main.py", stop_script)
+
 
 if __name__ == "__main__":
     unittest.main()
