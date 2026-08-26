@@ -37,6 +37,7 @@ $env:OCI_CONFIG_PROFILE = 'DEFAULT'
 $env:OCI_REGION = 'us-phoenix-1'
 $env:OCI_COMPARTMENT_ID = 'ocid1.compartment.oc1..replace_with_yours'
 $env:TRANSLATION_BUFFER_SECONDS = '1.5'
+$env:ORATRANSLATE_LOG_LEVEL = 'INFO'
 $env:SPEECH_WEB_PORT = '8765'
 $env:SPEECH_WEB_ALLOWED_ORIGINS = 'http://localhost:8080,https://speech.customer.example'
 $env:SESSION_STORAGE_DIR = 'C:\path\to\persistent\recorded_sessions'
@@ -47,11 +48,19 @@ The selected profile must be an API-key profile containing `tenancy`, `user`,
 `security_token_file` or `authentication_type` are rejected so the application
 cannot accidentally fall back to temporary session authentication.
 
-The server creates one explicit `oci.signer.Signer` from the profile and passes
-that signer to both OCI Speech Realtime and OCI Language. Do not put private
-keys or their contents in environment variables or source files. The server
-reads the private-key path from the OCI config profile and never sends
-credentials to the browser.
+The server creates two independent `oci.signer.Signer` instances from the same
+profile: one is owned by OCI Speech Realtime and one is owned by the dedicated
+Language `TranslationService`. Each signer and client is reused for its own
+service throughout one live browser session. Do not put private keys or their
+contents in environment variables or source files. The server reads the
+private-key path from the OCI config profile and never sends credentials to the
+browser.
+
+Server logs are emitted as one JSON object per line. Translation request logs
+include the saved session ID, request number, latency, status/code, and OPC
+request ID, but deliberately omit transcript text, request headers, key paths,
+and credentials. Set `ORATRANSLATE_LOG_LEVEL` to `DEBUG`, `INFO`, `WARNING`, or
+`ERROR` to change the process log level; the default is `INFO`.
 
 For a dedicated deployment identity, set `OCI_CONFIG_PROFILE=API-USER` after
 that profile has been added to the OCI config. The profile name itself is not

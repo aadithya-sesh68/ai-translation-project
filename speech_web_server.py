@@ -31,6 +31,7 @@ from session_store import (
     list_sessions,
     public_session,
 )
+from structured_logging import configure_structured_logging, log_event
 
 
 LOGGER = logging.getLogger("speech_web_server")
@@ -269,7 +270,21 @@ async def handle_live_session(websocket: ServerConnection) -> None:
     try:
         archive = SessionArchive()
         settings = OciSpeechSettings.from_environment()
-        session = SpeechTranslationSession(settings, publish_and_record)
+        session = SpeechTranslationSession(
+            settings,
+            publish_and_record,
+            session_id=archive.session_id,
+        )
+        log_event(
+            LOGGER,
+            logging.INFO,
+            "live_session_created",
+            "Browser live session created",
+            session_id=archive.session_id,
+            region=settings.region,
+            profile=settings.profile_name,
+            authentication="api_key",
+        )
         publish_and_record(
             {
                 "type": "session_status",
@@ -324,11 +339,31 @@ async def handle_live_session(websocket: ServerConnection) -> None:
                 )
                 break
 
-    except ConnectionClosed:
-        pass
+    except ConnectionClosed as error:
+        log_event(
+            LOGGER,
+            logging.INFO,
+            "browser_websocket_closed",
+            "Browser WebSocket closed",
+            session_id=archive.session_id if archive else None,
+            status=getattr(error, "code", None),
+            close_reason=getattr(error, "reason", None),
+        )
     except Exception as error:
-        LOGGER.exception("Live session failed")
-        publish_and_record(safe_error_details(error, "session"))
+        details = safe_error_details(error, "session")
+        LOGGER.exception(
+            "Live session failed",
+            extra={
+                "event": "live_session_failed",
+                "session_id": archive.session_id if archive else None,
+                "stage": "session",
+                "status": details.get("status"),
+                "code": details.get("code"),
+                "opc_request_id": details.get("opc_request_id"),
+                "error_type": type(error).__name__,
+            },
+        )
+        publish_and_record(details)
     finally:
         if session:
             try:
@@ -336,8 +371,20 @@ async def handle_live_session(websocket: ServerConnection) -> None:
                     request_final_result=session_started and stop_requested
                 )
             except Exception as error:
-                LOGGER.exception("Live session cleanup failed")
-                publish_and_record(safe_error_details(error, "session_cleanup"))
+                details = safe_error_details(error, "session_cleanup")
+                LOGGER.exception(
+                    "Live session cleanup failed",
+                    extra={
+                        "event": "live_session_cleanup_failed",
+                        "session_id": archive.session_id if archive else None,
+                        "stage": "session_cleanup",
+                        "status": details.get("status"),
+                        "code": details.get("code"),
+                        "opc_request_id": details.get("opc_request_id"),
+                        "error_type": type(error).__name__,
+                    },
+                )
+                publish_and_record(details)
 
         saved_session: dict[str, Any] | None = None
         if archive:
@@ -357,8 +404,28 @@ async def handle_live_session(websocket: ServerConnection) -> None:
                         "session": saved_session,
                     }
                 )
+                log_event(
+                    LOGGER,
+                    logging.INFO,
+                    "session_archive_saved",
+                    "Session recording and transcripts saved",
+                    session_id=archive.session_id,
+                    session_status=saved_session.get("status"),
+                    duration_seconds=saved_session.get("duration_seconds"),
+                    audio_available=saved_session.get("audio_available"),
+                    english_available=saved_session.get("english_available"),
+                    french_available=saved_session.get("french_available"),
+                )
             except Exception as error:
-                LOGGER.exception("Session output could not be saved")
+                LOGGER.exception(
+                    "Session output could not be saved",
+                    extra={
+                        "event": "session_archive_failed",
+                        "session_id": archive.session_id,
+                        "stage": "session_storage",
+                        "error_type": type(error).__name__,
+                    },
+                )
                 publish(safe_error_details(error, "session_storage"))
 
         if stop_requested:
@@ -513,9 +580,15 @@ async def main() -> None:
     )
     allowed_origins = allowed_websocket_origins(port)
 
-    print(f"OCI Speech web app: http://localhost:{port}")
-    print(f"Allowed browser origins: {', '.join(allowed_origins)}")
-    print("Press Ctrl+C to stop the server.")
+    log_event(
+        LOGGER,
+        logging.INFO,
+        "server_starting",
+        "OraTranslate server starting",
+        host=host,
+        port=port,
+        allowed_origins=allowed_origins,
+    )
 
     async with serve(
         handle_websocket,
@@ -530,7 +603,10 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
+    configured_level = os.environ.get("ORATRANSLATE_LOG_LEVEL", "INFO").upper()
+    configure_structured_logging(
+        getattr(logging, configured_level, logging.INFO)
+    )
     try:
         asyncio.run(main())
     except KeyboardInterrupt:

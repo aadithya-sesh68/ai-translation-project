@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import time
+import uuid
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,18 +14,18 @@ from typing import Any, Callable
 
 import oci
 from oci.ai_language import AIServiceLanguageClient
-from oci.ai_language.models import (
-    BatchLanguageTranslationDetails,
-    TextDocument,
-)
 from oci.ai_speech.models import RealtimeParameters
 from oci_ai_speech_realtime import (
     RealtimeSpeechClient,
     RealtimeSpeechClientListener,
 )
 
+from structured_logging import log_event
+from translation_service import TranslationService, safe_error_details
+
 
 EventSink = Callable[[dict[str, Any]], None]
+LOGGER = logging.getLogger("oci_speech_service")
 
 
 @dataclass(frozen=True)
@@ -100,7 +102,7 @@ def load_api_key_config(
 
 
 def create_api_key_signer(config: dict[str, str]) -> oci.signer.Signer:
-    """Create the explicit OCI request signer used by Speech and Language."""
+    """Create one explicit OCI request signer for a single service client."""
 
     return oci.signer.Signer(
         tenancy=config["tenancy"],
@@ -136,7 +138,7 @@ def create_api_key_realtime_client(
     parameters: RealtimeParameters,
     listener: RealtimeSpeechClientListener,
 ) -> RealtimeSpeechClient:
-    """Create Realtime Speech with the same explicit API-key signer."""
+    """Create Realtime Speech with its dedicated API-key signer."""
 
     return RealtimeSpeechClient(
         config=config,
@@ -151,28 +153,6 @@ def create_api_key_realtime_client(
     )
 
 
-def safe_error_details(error: Exception, stage: str) -> dict[str, Any]:
-    """Return useful OCI diagnostics without credentials or request headers."""
-
-    details: dict[str, Any] = {
-        "type": "error",
-        "stage": stage,
-        "message": str(error),
-    }
-
-    if isinstance(error, oci.exceptions.ServiceError):
-        details.update(
-            {
-                "status": error.status,
-                "code": error.code,
-                "message": error.message,
-                "opc_request_id": error.request_id,
-            }
-        )
-
-    return {key: value for key, value in details.items() if value is not None}
-
-
 async def run_translation_reliability_test(
     settings: OciSpeechSettings,
     sentences: list[str],
@@ -182,7 +162,12 @@ async def run_translation_reliability_test(
 ) -> None:
     """Translate each sentence once and stream request-level diagnostics."""
 
-    language_client = create_api_key_language_client(settings)
+    config = load_api_key_config(
+        settings.config_file,
+        settings.profile_name,
+        settings.region,
+    )
+    test_id = f"translation-test-{uuid.uuid4().hex[:12]}"
     work_queue: asyncio.Queue[tuple[int, str] | None] = asyncio.Queue()
     result_codes: Counter[str] = Counter()
     test_started = time.perf_counter()
@@ -195,80 +180,72 @@ async def run_translation_reliability_test(
     event_sink(
         {
             "type": "translation_test_started",
+            "test_id": test_id,
             "total": len(sentences),
             "concurrency": concurrency,
             "delay_ms": delay_ms,
         }
     )
 
-    async def translate_one(index: int, english_text: str) -> None:
-        request_started = time.perf_counter()
-        try:
-            details = BatchLanguageTranslationDetails(
-                compartment_id=settings.compartment_id,
-                target_language_code="fr",
-                documents=[
-                    TextDocument(
-                        key=f"reliability-test-{index}",
-                        text=english_text,
-                        language_code="en",
-                    )
-                ],
-            )
-            response = await asyncio.to_thread(
-                language_client.batch_language_translation,
-                details,
-                retry_strategy=oci.retry.NoneRetryStrategy(),
-            )
-            latency_ms = round(
-                (time.perf_counter() - request_started) * 1000
-            )
+    log_event(
+        LOGGER,
+        logging.INFO,
+        "translation_test_started",
+        "OCI Language reliability test started",
+        session_id=test_id,
+        total=len(sentences),
+        concurrency=concurrency,
+        delay_ms=delay_ms,
+    )
+
+    async def translate_one(
+        service: TranslationService,
+        index: int,
+        english_text: str,
+    ) -> None:
+        result = await service.translate(
+            english_text,
+            document_key=f"reliability-test-{index}",
+            stage="translation_test",
+        )
+
+        if result.get("french") is not None:
             result_codes["success"] += 1
             event_sink(
                 {
                     "type": "translation_test_result",
                     "index": index,
                     "english": english_text,
-                    "french": response.data.documents[0].translated_text,
-                    "latency_ms": latency_ms,
-                    "status": getattr(response, "status", 200),
-                    "code": "OK",
-                    "opc_request_id": response.headers.get(
-                        "opc-request-id"
-                    ),
+                    **result,
                 }
             )
-        except asyncio.CancelledError:
-            raise
-        except Exception as error:
-            latency_ms = round(
-                (time.perf_counter() - request_started) * 1000
-            )
-            event = safe_error_details(error, "translation_test")
-            event.update(
-                {
-                    "type": "translation_test_result",
-                    "index": index,
-                    "english": english_text,
-                    "latency_ms": latency_ms,
-                }
-            )
-            headers = getattr(error, "headers", None) or {}
-            retry_after = headers.get("retry-after")
-            if retry_after:
-                event["retry_after"] = retry_after
+            return
 
-            result_key = str(event.get("status") or event.get("code") or "error")
-            result_codes[result_key] += 1
-            event_sink(event)
+        event = {
+            **result,
+            "type": "translation_test_result",
+            "index": index,
+            "english": english_text,
+        }
+        result_key = str(event.get("status") or event.get("code") or "error")
+        result_codes[result_key] += 1
+        event_sink(event)
 
     async def worker() -> None:
+        # Each concurrent worker owns an independent Language signer/client.
+        language_signer = create_api_key_signer(config)
+        service = TranslationService.from_config(
+            dict(config),
+            language_signer,
+            settings.compartment_id,
+            test_id,
+        )
         while True:
             item = await work_queue.get()
             try:
                 if item is None:
                     return
-                await translate_one(*item)
+                await translate_one(service, *item)
                 if delay_ms:
                     await asyncio.sleep(delay_ms / 1000)
             finally:
@@ -287,6 +264,7 @@ async def run_translation_reliability_test(
     event_sink(
         {
             "type": "translation_test_complete",
+            "test_id": test_id,
             "total": len(sentences),
             "counts": dict(result_codes),
             "elapsed_ms": round(
@@ -294,24 +272,34 @@ async def run_translation_reliability_test(
             ),
         }
     )
+    log_event(
+        LOGGER,
+        logging.INFO,
+        "translation_test_completed",
+        "OCI Language reliability test completed",
+        session_id=test_id,
+        total=len(sentences),
+        counts=dict(result_codes),
+        elapsed_ms=round((time.perf_counter() - test_started) * 1000),
+    )
 
 
 class SpeechTranslationListener(RealtimeSpeechClientListener):
-    """Receive Speech results and translate buffered final English segments."""
+    """Receive Speech results and queue final English segments for translation."""
 
     def __init__(
         self,
-        language_client: AIServiceLanguageClient,
-        compartment_id: str,
+        translation_service: TranslationService,
         event_sink: EventSink,
         event_loop: asyncio.AbstractEventLoop,
         translation_buffer_seconds: float,
+        session_id: str | None = None,
     ) -> None:
-        self.language_client = language_client
-        self.compartment_id = compartment_id
+        self.translation_service = translation_service
         self.event_sink = event_sink
         self.event_loop = event_loop
         self.translation_buffer_seconds = translation_buffer_seconds
+        self.session_id = session_id
 
         self.pending_segments: list[str] = []
         self.translation_queue: asyncio.Queue[str | None] = asyncio.Queue()
@@ -343,6 +331,13 @@ class SpeechTranslationListener(RealtimeSpeechClientListener):
         pass
 
     def on_connect(self) -> None:
+        log_event(
+            LOGGER,
+            logging.INFO,
+            "speech_websocket_connected",
+            "OCI Speech Realtime WebSocket connected",
+            session_id=self.session_id,
+        )
         self._publish(
             {
                 "type": "session_status",
@@ -352,10 +347,30 @@ class SpeechTranslationListener(RealtimeSpeechClientListener):
         )
 
     def on_connect_message(self, message: Any) -> None:
+        log_event(
+            LOGGER,
+            logging.INFO,
+            "speech_session_ready",
+            "OCI Speech Realtime session is ready",
+            session_id=self.session_id,
+        )
         self.event_loop.call_soon_threadsafe(self.ready.set)
 
     def on_error(self, error: Exception) -> None:
         details = safe_error_details(error, "speech")
+        log_event(
+            LOGGER,
+            logging.ERROR,
+            "speech_error",
+            "OCI Speech Realtime reported an error",
+            session_id=self.session_id,
+            stage="speech",
+            status=details.get("status"),
+            code=details.get("code"),
+            opc_request_id=details.get("opc_request_id"),
+            error_type=type(error).__name__,
+            error_message=details.get("message"),
+        )
 
         def record_error() -> None:
             self.last_speech_error = details
@@ -420,40 +435,36 @@ class SpeechTranslationListener(RealtimeSpeechClientListener):
                 if english_text is None:
                     return
 
-                details = BatchLanguageTranslationDetails(
-                    compartment_id=self.compartment_id,
-                    target_language_code="fr",
-                    documents=[
-                        TextDocument(
-                            key="live-speech",
-                            text=english_text,
-                            language_code="en",
-                        )
-                    ],
+                result = await self.translation_service.translate(
+                    english_text,
+                    document_key="live-speech",
                 )
 
-                response = await asyncio.to_thread(
-                    self.language_client.batch_language_translation,
-                    details,
-                    # Authorization failures aren't transient. Make one request
-                    # and report OCI's diagnostic and OPC request ID as-is.
-                    retry_strategy=oci.retry.NoneRetryStrategy(),
-                )
-
-                french_text = response.data.documents[0].translated_text
-                self._publish(
-                    {
-                        "type": "translation",
-                        "english": english_text,
-                        "french": french_text,
-                        "opc_request_id": response.headers.get(
-                            "opc-request-id"
-                        ),
-                    }
-                )
+                if result.get("french") is not None:
+                    self._publish(
+                        {
+                            "type": "translation",
+                            "english": english_text,
+                            "french": result["french"],
+                            "opc_request_id": result.get("opc_request_id"),
+                        }
+                    )
+                else:
+                    result["english"] = english_text
+                    self._publish(result)
             except Exception as error:
                 event = safe_error_details(error, "translation")
                 event["english"] = english_text
+                log_event(
+                    LOGGER,
+                    logging.ERROR,
+                    "translation_worker_failed",
+                    "Translation worker failed unexpectedly",
+                    session_id=self.session_id,
+                    stage="translation",
+                    error_type=type(error).__name__,
+                    error_message=event.get("message"),
+                )
                 self._publish(event)
             finally:
                 self.translation_queue.task_done()
@@ -474,6 +485,17 @@ class SpeechTranslationListener(RealtimeSpeechClientListener):
             await self.translation_worker_task
 
     def on_close(self, error_code: int, error_message: str) -> None:
+        log_event(
+            LOGGER,
+            logging.INFO if error_code == 1000 else logging.ERROR,
+            "speech_websocket_closed",
+            "OCI Speech Realtime WebSocket closed",
+            session_id=self.session_id,
+            stage="speech",
+            status=error_code,
+            code="NORMAL_CLOSURE" if error_code == 1000 else "WEBSOCKET_CLOSED",
+            error_message=error_message or None,
+        )
         status_event = {
             "type": "session_status",
             "state": "speech_closed",
@@ -510,9 +532,11 @@ class SpeechTranslationSession:
         self,
         settings: OciSpeechSettings,
         event_sink: EventSink,
+        session_id: str | None = None,
     ) -> None:
         self.settings = settings
         self.event_sink = event_sink
+        self.session_id = session_id
         self.listener: SpeechTranslationListener | None = None
         self.client: RealtimeSpeechClient | None = None
         self.connection_task: asyncio.Task[None] | None = None
@@ -525,21 +549,34 @@ class SpeechTranslationSession:
             self.settings.profile_name,
             self.settings.region,
         )
-        signer = create_api_key_signer(config)
+        speech_signer = create_api_key_signer(config)
+        language_signer = create_api_key_signer(config)
+        translation_service = TranslationService.from_config(
+            dict(config),
+            language_signer,
+            self.settings.compartment_id,
+            self.session_id,
+        )
 
-        language_client = AIServiceLanguageClient(
-            config=config,
-            signer=signer,
+        log_event(
+            LOGGER,
+            logging.INFO,
+            "oci_clients_created",
+            "Created independent Speech and Language clients",
+            session_id=self.session_id,
+            region=self.settings.region,
+            profile=self.settings.profile_name,
+            authentication="api_key",
         )
 
         self.listener = SpeechTranslationListener(
-            language_client=language_client,
-            compartment_id=self.settings.compartment_id,
+            translation_service=translation_service,
             event_sink=self.event_sink,
             event_loop=asyncio.get_running_loop(),
             translation_buffer_seconds=(
                 self.settings.translation_buffer_seconds
             ),
+            session_id=self.session_id,
         )
         self.listener.start()
 
@@ -554,7 +591,7 @@ class SpeechTranslationSession:
         self.client = create_api_key_realtime_client(
             settings=self.settings,
             config=config,
-            signer=signer,
+            signer=speech_signer,
             parameters=parameters,
             listener=self.listener,
         )
@@ -571,6 +608,14 @@ class SpeechTranslationSession:
             )
 
             if ready_task in done and self.listener.ready.is_set():
+                log_event(
+                    LOGGER,
+                    logging.INFO,
+                    "live_session_ready",
+                    "Live OCI Speech and Language session is ready",
+                    session_id=self.session_id,
+                    region=self.settings.region,
+                )
                 self.event_sink(
                     {
                         "type": "session_ready",
@@ -643,3 +688,12 @@ class SpeechTranslationSession:
 
             if self.listener:
                 await self.listener.finish()
+
+            log_event(
+                LOGGER,
+                logging.INFO,
+                "live_session_stopped",
+                "Live OCI Speech and Language session stopped",
+                session_id=self.session_id,
+                final_result_requested=request_final_result,
+            )
