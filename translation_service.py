@@ -135,6 +135,7 @@ class TranslationService:
             )
             return {
                 "french": french_text,
+                "request_number": request_number,
                 "latency_ms": latency_ms,
                 "status": status,
                 "code": "OK",
@@ -147,6 +148,7 @@ class TranslationService:
                 (time.perf_counter() - request_started) * 1000
             )
             result = safe_error_details(error, stage)
+            result["request_number"] = request_number
             result["latency_ms"] = latency_ms
 
             headers = getattr(error, "headers", None) or {}

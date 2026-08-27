@@ -146,15 +146,17 @@ def session_api_response(request: Request, path: str) -> Response | None:
                 "audio.mp3": "session.mp3",
                 "english.txt": "english.txt",
                 "french.txt": "french.txt",
+                "session-report.json": "session_report.json",
             }.get(parts[3])
             if not requested_name:
                 raise FileNotFoundError(path)
             file_path = get_session_file(parts[2], requested_name)
-            content_type = (
-                "audio/mpeg"
-                if requested_name == "session.mp3"
-                else "text/plain; charset=utf-8"
-            )
+            if requested_name == "session.mp3":
+                content_type = "audio/mpeg"
+            elif requested_name == "session_report.json":
+                content_type = "application/json; charset=utf-8"
+            else:
+                content_type = "text/plain; charset=utf-8"
             return response(
                 HTTPStatus.OK,
                 file_path.read_bytes(),

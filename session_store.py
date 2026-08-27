@@ -6,7 +6,9 @@ import json
 import os
 import re
 import shutil
+import statistics
 import uuid
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -62,6 +64,48 @@ def _write_json(path: Path, payload: Any) -> None:
     temporary_path.replace(path)
 
 
+def _safe_diagnostic(
+    event: dict[str, Any],
+    recorded_at: str,
+) -> dict[str, Any]:
+    """Keep operational error fields without transcript or credential data."""
+
+    diagnostic = {
+        key: event[key]
+        for key in (
+            "stage",
+            "message",
+            "status",
+            "code",
+            "opc_request_id",
+            "request_number",
+            "latency_ms",
+        )
+        if event.get(key) is not None
+    }
+    diagnostic["recorded_at"] = recorded_at
+    return diagnostic
+
+
+def _latency_summary(values: list[float]) -> dict[str, int | float | None]:
+    if not values:
+        return {
+            "count": 0,
+            "minimum": None,
+            "average": None,
+            "median": None,
+            "maximum": None,
+        }
+
+    return {
+        "count": len(values),
+        "minimum": min(values),
+        "average": round(sum(values) / len(values), 1),
+        "median": round(statistics.median(values), 1),
+        "maximum": max(values),
+    }
+
+
 class SessionArchive:
     """Write one microphone stream and its OCI results to a session folder."""
 
@@ -77,12 +121,31 @@ class SessionArchive:
         self.english_path = self.directory / "english.txt"
         self.french_path = self.directory / "french.txt"
         self.diagnostics_path = self.directory / "diagnostics.json"
+        self.report_path = self.directory / "session_report.json"
         self.metadata_path = self.directory / "metadata.json"
 
         self.english_segments: list[str] = []
         self.french_segments: list[str] = []
         self.diagnostics: list[dict[str, Any]] = []
         self.audio_bytes = 0
+        self.audio_chunks = 0
+        self.speech_connections_attempted = 0
+        self.speech_connections_ready = 0
+        self.transcript_updates = 0
+        self.final_transcript_segments = 0
+        self.speech_errors = 0
+        self.translation_requests = 0
+        self.translation_successes = 0
+        self.translation_failures = 0
+        self.translation_status_counts: Counter[str] = Counter()
+        self.translation_code_counts: Counter[str] = Counter()
+        self.translation_latencies_ms: list[float] = []
+        self.error_count = 0
+        self.error_stage_counts: Counter[str] = Counter()
+        self.error_status_counts: Counter[str] = Counter()
+        self.error_code_counts: Counter[str] = Counter()
+        self.first_error: dict[str, Any] | None = None
+        self.last_error: dict[str, Any] | None = None
         self._finalized = False
         self._audio_file = soundfile.SoundFile(
             str(self.audio_path),
@@ -103,31 +166,138 @@ class SessionArchive:
             raise ValueError("PCM recording data must contain complete samples.")
         self._audio_file.buffer_write(pcm_audio, dtype="int16")
         self.audio_bytes += len(pcm_audio)
+        self.audio_chunks += 1
+
+    def _record_translation_result(
+        self,
+        event: dict[str, Any],
+        succeeded: bool,
+    ) -> None:
+        self.translation_requests += 1
+        if succeeded:
+            self.translation_successes += 1
+        else:
+            self.translation_failures += 1
+
+        status = event.get("status")
+        if status is not None:
+            self.translation_status_counts[str(status)] += 1
+        code = event.get("code")
+        if code is not None:
+            self.translation_code_counts[str(code)] += 1
+        latency_ms = event.get("latency_ms")
+        if (
+            isinstance(latency_ms, (int, float))
+            and not isinstance(latency_ms, bool)
+            and latency_ms >= 0
+        ):
+            self.translation_latencies_ms.append(latency_ms)
+
+    def _record_error(self, event: dict[str, Any]) -> None:
+        recorded_at = utc_string(utc_now())
+        diagnostic = _safe_diagnostic(event, recorded_at)
+        self.error_count += 1
+
+        stage = str(event.get("stage") or "unknown")
+        self.error_stage_counts[stage] += 1
+        if stage.startswith("speech"):
+            self.speech_errors += 1
+
+        status = event.get("status")
+        if status is not None:
+            self.error_status_counts[str(status)] += 1
+        code = event.get("code")
+        if code is not None:
+            self.error_code_counts[str(code)] += 1
+
+        if self.first_error is None:
+            self.first_error = diagnostic
+        self.last_error = diagnostic
+        if len(self.diagnostics) < MAX_DIAGNOSTICS:
+            self.diagnostics.append(diagnostic)
 
     def record_event(self, event: dict[str, Any]) -> None:
         event_type = event.get("type")
-        if event_type == "transcript" and event.get("is_final"):
-            text = str(event.get("text") or "").strip()
-            if text:
-                self.english_segments.append(text)
+        if event_type == "session_status" and event.get("state") == "connecting":
+            self.speech_connections_attempted += 1
+        elif event_type == "session_ready":
+            self.speech_connections_ready += 1
+        elif event_type == "transcript":
+            self.transcript_updates += 1
+            if event.get("is_final"):
+                text = str(event.get("text") or "").strip()
+                if text:
+                    self.english_segments.append(text)
+                    self.final_transcript_segments += 1
         elif event_type == "translation":
             text = str(event.get("french") or "").strip()
             if text:
                 self.french_segments.append(text)
-        elif event_type == "error" and len(self.diagnostics) < MAX_DIAGNOSTICS:
-            self.diagnostics.append(
-                {
-                    key: event[key]
-                    for key in (
-                        "stage",
-                        "message",
-                        "status",
-                        "code",
-                        "opc_request_id",
-                    )
-                    if event.get(key) is not None
-                }
-            )
+            self._record_translation_result(event, succeeded=True)
+        elif event_type == "error":
+            if event.get("stage") == "translation":
+                self._record_translation_result(event, succeeded=False)
+            self._record_error(event)
+
+    def _build_report(
+        self,
+        status: str,
+        ended_at: datetime,
+        duration_seconds: float,
+    ) -> dict[str, Any]:
+        """Build a transcript-free operational summary for one session."""
+
+        return {
+            "schema_version": 1,
+            "session_id": self.session_id,
+            "title": self.title,
+            "session_status": status,
+            "started_at": utc_string(self.started_at),
+            "ended_at": utc_string(ended_at),
+            "duration_seconds": duration_seconds,
+            "summary": {
+                "speech_realtime_connections_attempted": (
+                    self.speech_connections_attempted
+                ),
+                "speech_realtime_connections_ready": (
+                    self.speech_connections_ready
+                ),
+                "language_requests_total": self.translation_requests,
+                "errors_total": self.error_count,
+            },
+            "speech_realtime": {
+                "connections_attempted": self.speech_connections_attempted,
+                "connections_ready": self.speech_connections_ready,
+                "audio_chunks_received": self.audio_chunks,
+                "audio_bytes_received": self.audio_bytes,
+                "transcript_updates_total": self.transcript_updates,
+                "final_transcript_segments": self.final_transcript_segments,
+                "errors_total": self.speech_errors,
+            },
+            "language_translation": {
+                "requests_total": self.translation_requests,
+                "succeeded": self.translation_successes,
+                "failed": self.translation_failures,
+                "status_counts": dict(self.translation_status_counts),
+                "code_counts": dict(self.translation_code_counts),
+                "latency_ms": _latency_summary(
+                    self.translation_latencies_ms
+                ),
+            },
+            "errors": {
+                "total": self.error_count,
+                "saved_details": len(self.diagnostics),
+                "omitted_details": max(
+                    self.error_count - len(self.diagnostics),
+                    0,
+                ),
+                "by_stage": dict(self.error_stage_counts),
+                "by_status": dict(self.error_status_counts),
+                "by_code": dict(self.error_code_counts),
+                "first": self.first_error,
+                "last": self.last_error,
+            },
+        }
 
     def finalize(self, status: str) -> dict[str, Any]:
         """Close the MP3 and atomically publish the session metadata."""
@@ -141,11 +311,19 @@ class SessionArchive:
             self.audio_path.unlink()
 
         ended_at = utc_now()
+        duration_seconds = round(
+            self.audio_bytes / (SAMPLE_RATE * PCM_SAMPLE_BYTES),
+            1,
+        )
         english_text = " ".join(self.english_segments).strip()
         french_text = " ".join(self.french_segments).strip()
         self.english_path.write_text(english_text, encoding="utf-8")
         self.french_path.write_text(french_text, encoding="utf-8")
         _write_json(self.diagnostics_path, self.diagnostics)
+        _write_json(
+            self.report_path,
+            self._build_report(status, ended_at, duration_seconds),
+        )
 
         metadata = {
             "session_id": self.session_id,
@@ -153,15 +331,15 @@ class SessionArchive:
             "status": status,
             "started_at": utc_string(self.started_at),
             "ended_at": utc_string(ended_at),
-            "duration_seconds": round(
-                self.audio_bytes / (SAMPLE_RATE * PCM_SAMPLE_BYTES), 1
-            ),
+            "duration_seconds": duration_seconds,
             "audio_available": self.audio_bytes > 0 and self.audio_path.is_file(),
             "english_available": bool(english_text),
             "french_available": bool(french_text),
             "english_characters": len(english_text),
             "french_characters": len(french_text),
             "diagnostic_count": len(self.diagnostics),
+            "error_count": self.error_count,
+            "session_report_available": True,
         }
         _write_json(self.metadata_path, metadata)
         return metadata
@@ -195,6 +373,10 @@ def public_session(metadata: dict[str, Any]) -> dict[str, Any]:
         result["audio_url"] = f"/api/sessions/{session_id}/audio.mp3"
     result["english_url"] = f"/api/sessions/{session_id}/english.txt"
     result["french_url"] = f"/api/sessions/{session_id}/french.txt"
+    if metadata.get("session_report_available"):
+        result["report_url"] = (
+            f"/api/sessions/{session_id}/session-report.json"
+        )
     return result
 
 
@@ -232,6 +414,12 @@ def get_session(session_id: str, root: Path | None = None) -> dict[str, Any]:
         if diagnostics_path.is_file()
         else []
     )
+    report_path = directory / "session_report.json"
+    metadata["session_report"] = (
+        json.loads(report_path.read_text(encoding="utf-8"))
+        if report_path.is_file()
+        else None
+    )
     return metadata
 
 
@@ -240,7 +428,12 @@ def get_session_file(
     filename: str,
     root: Path | None = None,
 ) -> Path:
-    allowed_files = {"session.mp3", "english.txt", "french.txt"}
+    allowed_files = {
+        "session.mp3",
+        "english.txt",
+        "french.txt",
+        "session_report.json",
+    }
     if filename not in allowed_files:
         raise ValueError("Unsupported session file.")
     path = session_directory(session_id, root) / filename

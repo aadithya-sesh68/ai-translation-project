@@ -101,8 +101,9 @@ not yet implemented in this prototype.
    Language translation.
 6. **End session** flushes remaining audio, requests the final Speech result,
    and completes queued translations.
-7. The server closes the MP3 recording and saves English, French, metadata, and
-   safe OCI diagnostics in a session-specific folder.
+7. The server closes the MP3 recording and saves English, French, metadata,
+   safe OCI error details, and an operational session report in a
+   session-specific folder.
 8. The **Session recordings** section refreshes automatically so the completed
    session can be played and its text outputs reviewed or downloaded.
 
@@ -118,7 +119,18 @@ recorded_sessions\<session-id>\english.txt
 recorded_sessions\<session-id>\french.txt
 recorded_sessions\<session-id>\metadata.json
 recorded_sessions\<session-id>\diagnostics.json
+recorded_sessions\<session-id>\session_report.json
 ```
+
+`session_report.json` summarizes the complete session without storing
+transcript text. It includes Speech Realtime connection and audio activity,
+transcript counts, total/successful/failed Language requests, HTTP status and
+OCI code counts, minimum/average/median/maximum translation latency, total error
+counts, and the first and last error. `diagnostics.json` still retains at most
+100 detailed errors, while the report continues counting every error and states
+how many detailed entries were omitted. The saved-session viewer provides a
+**Download session report** link for newly completed sessions. Sessions saved by
+older application versions don't have a report and keep their existing outputs.
 
 The MP3 is encoded directly from the same 16 kHz mono PCM stream sent to OCI
 Speech. If the browser disconnects without **End session**, the server still
@@ -134,7 +146,7 @@ saves the available recording and text as an `interrupted` session.
 Use **Delete saved session** in the selected session viewer to permanently
 remove that session's complete server folder. The UI requires confirmation;
 after deletion, its MP3, English text, French text, metadata, and diagnostics
-cannot be recovered.
+and session report cannot be recovered.
 
 ## Nginx reverse proxy
 

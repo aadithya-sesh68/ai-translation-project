@@ -21,6 +21,7 @@ const savedAudio = document.querySelector("#saved-audio");
 const downloadAudio = document.querySelector("#download-audio");
 const downloadEnglish = document.querySelector("#download-english");
 const downloadFrench = document.querySelector("#download-french");
+const downloadReport = document.querySelector("#download-report");
 const deleteSessionButton = document.querySelector("#delete-session");
 const savedEnglish = document.querySelector("#saved-english");
 const savedFrench = document.querySelector("#saved-french");
@@ -337,6 +338,12 @@ async function selectSession(sessionId) {
 
     downloadEnglish.href = applicationPath(session.english_url);
     downloadFrench.href = applicationPath(session.french_url);
+    downloadReport.hidden = !session.report_url;
+    if (session.report_url) {
+      downloadReport.href = applicationPath(session.report_url);
+    } else {
+      downloadReport.removeAttribute("href");
+    }
     savedEnglish.textContent =
       session.english_text || "No English transcript was captured.";
     savedFrench.textContent =
@@ -416,7 +423,7 @@ async function deleteSelectedSession() {
 
   const title = savedSessionTitle.textContent || "this saved session";
   const confirmed = window.confirm(
-    `Permanently delete “${title}”?\n\nThe MP3, English text, French text, metadata, and diagnostics cannot be recovered.`,
+    `Permanently delete “${title}”?\n\nThe MP3, English text, French text, session report, metadata, and diagnostics cannot be recovered.`,
   );
   if (!confirmed) {
     return;

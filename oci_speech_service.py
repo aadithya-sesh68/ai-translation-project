@@ -446,6 +446,10 @@ class SpeechTranslationListener(RealtimeSpeechClientListener):
                             "type": "translation",
                             "english": english_text,
                             "french": result["french"],
+                            "request_number": result.get("request_number"),
+                            "latency_ms": result.get("latency_ms"),
+                            "status": result.get("status"),
+                            "code": result.get("code"),
                             "opc_request_id": result.get("opc_request_id"),
                         }
                     )

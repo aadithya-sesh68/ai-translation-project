@@ -284,6 +284,7 @@ class OciApiKeyAuthenticationTest(unittest.TestCase):
         self.assertEqual(200, result["status"])
         self.assertEqual("OK", result["code"])
         self.assertEqual("opc-123", result["opc_request_id"])
+        self.assertEqual(1, result["request_number"])
         self.assertIn("latency_ms", result)
 
     def test_translation_service_preserves_oci_failure_diagnostics(self) -> None:
@@ -311,6 +312,7 @@ class OciApiKeyAuthenticationTest(unittest.TestCase):
         self.assertEqual(401, result["status"])
         self.assertEqual("NotAuthenticated", result["code"])
         self.assertEqual("opc-error-123", result["opc_request_id"])
+        self.assertEqual(1, result["request_number"])
         self.assertIn("latency_ms", result)
 
     def test_diagnostic_uses_explicit_api_key_signer(self) -> None:

@@ -45,6 +45,17 @@ class LiveFrontendStructureTest(unittest.TestCase):
         self.assertIn("const latestTranslation = frenchSegments.at(-1);", script)
         self.assertIn("currentFrenchCaption.textContent", script)
 
+    def test_saved_session_report_is_downloadable(self) -> None:
+        html = (PROJECT_ROOT / "web" / "index.html").read_text(
+            encoding="utf-8"
+        )
+        script = (PROJECT_ROOT / "web" / "app.js").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('id="download-report"', html)
+        self.assertIn("session.report_url", script)
+
 
 if __name__ == "__main__":
     unittest.main()
