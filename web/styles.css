@@ -76,7 +76,7 @@ input:focus-visible {
 .shell {
   width: min(1180px, calc(100% - 2rem));
   margin: 0 auto;
-  padding: 4rem 0 2rem;
+  padding: 2.75rem 0 2rem;
 }
 
 .hero {
@@ -124,8 +124,8 @@ h1 {
 
 .session-controls {
   display: grid;
-  flex: 0 0 min(360px, 100%);
-  gap: 0.55rem;
+  gap: 0.65rem;
+  min-width: 0;
 }
 
 .session-controls label {
@@ -143,18 +143,20 @@ h1 {
 .status-panel {
   display: flex;
   align-items: center;
-  gap: 0.8rem;
-  min-height: 64px;
-  margin: 1.2rem 0;
-  padding: 0.8rem 1rem;
-  border: 1px solid #d7d1c5;
-  border-radius: 14px;
-  background: rgb(255 253 248 / 68%);
+  min-width: 0;
+  margin: 0;
 }
 
-.status-panel p {
+.status-line {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+}
+
+.status-line p {
   margin: 0;
   color: #59615c;
+  line-height: 1.45;
 }
 
 #status-badge {
@@ -179,6 +181,11 @@ h1 {
 #status-badge[data-state="error"] {
   color: #fff;
   background: #a13b32;
+}
+
+#status-badge[data-state="unavailable"] {
+  color: #6b330d;
+  background: #f5d8bd;
 }
 
 .results-grid {
@@ -427,6 +434,13 @@ h2 {
   width: 100%;
 }
 
+.archive-playback-note {
+  margin: 0.55rem 0 0;
+  color: #68716c;
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
 .download-links {
   display: flex;
   flex-wrap: wrap;
@@ -507,22 +521,214 @@ footer p {
 
 .app-header {
   align-items: center;
-  padding-bottom: 1.35rem;
+  padding-bottom: 1rem;
 }
 
 .app-header h1 {
-  font-size: clamp(2.5rem, 5vw, 4.35rem);
+  font-size: clamp(2.5rem, 4.6vw, 4rem);
 }
 
 .app-header .lede {
-  margin-top: 0.75rem;
+  margin-top: 0.55rem;
   font-size: 1rem;
+}
+
+.app-tabs {
+  display: inline-flex;
+  gap: 0.25rem;
+  margin-top: 0.85rem;
+  padding: 0.3rem;
+  border: 1px solid #d4cec1;
+  border-radius: 999px;
+  background: rgb(229 225 215 / 72%);
+}
+
+.app-tab {
+  min-height: 42px;
+  padding: 0.2rem 1.15rem;
+  border: 0;
+  border-radius: 999px;
+  color: #626a65;
+  background: transparent;
+  box-shadow: none;
+}
+
+.app-tab:hover:not(:disabled):not([aria-selected="true"]) {
+  transform: none;
+  color: #163e32;
+  background: rgb(255 253 248 / 72%);
+}
+
+.app-tab[aria-selected="true"] {
+  color: #fff;
+  background: #163e32;
+  box-shadow: 0 5px 14px rgb(22 62 50 / 20%);
+}
+
+.tab-panel {
+  min-width: 0;
+}
+
+.session-command-center {
+  display: grid;
+  grid-template-columns: minmax(300px, 1.05fr) minmax(330px, 0.95fr);
+  align-items: stretch;
+  margin-top: 0.85rem;
+  padding: 1rem 1.1rem;
+  border: 1px solid #d7d1c5;
+  border-radius: 20px;
+  background:
+    radial-gradient(circle at 100% 0%, rgb(27 112 84 / 9%), transparent 18rem),
+    rgb(255 253 248 / 82%);
+  box-shadow: 0 12px 32px rgb(34 49 42 / 7%);
+}
+
+.session-command-center .session-controls {
+  padding-right: 1.15rem;
+}
+
+.session-feedback {
+  display: grid;
+  align-content: center;
+  gap: 0.75rem;
+  min-width: 0;
+  padding-left: 1.15rem;
+  border-left: 1px solid #ddd7ca;
+}
+
+.microphone-monitor {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) minmax(130px, 0.48fr);
+  align-items: center;
+  gap: 0.75rem;
+  min-width: 0;
+  margin: 0;
+  padding: 0.75rem 0 0;
+  border: 0;
+  border-top: 1px solid #ddd7ca;
+  border-radius: 0;
+  color: #34433c;
+  background: transparent;
+  transition:
+    border-color 160ms ease,
+    background-color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.microphone-icon {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border-radius: 12px;
+  color: #59615c;
+  background: #ece8df;
+  transition:
+    color 160ms ease,
+    background-color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.microphone-icon svg {
+  width: 21px;
+  height: 21px;
+  fill: none;
+  stroke: currentcolor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
+.microphone-copy {
+  display: grid;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.microphone-copy strong {
+  color: #253b32;
+  font-size: 0.92rem;
+}
+
+.microphone-copy span {
+  overflow: hidden;
+  color: #66706a;
+  font-size: 0.8rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.microphone-level {
+  display: flex;
+  height: 30px;
+  align-items: end;
+  justify-content: flex-end;
+  gap: 4px;
+  padding: 5px 7px;
+  border-radius: 10px;
+  background: #efebe3;
+}
+
+.microphone-level span {
+  width: 5px;
+  height: 28%;
+  border-radius: 999px;
+  background: #c8c4ba;
+  transition:
+    height 90ms linear,
+    background-color 90ms linear;
+}
+
+.microphone-level span:nth-child(3n + 1) {
+  height: 42%;
+}
+
+.microphone-level span:nth-child(4n + 2) {
+  height: 64%;
+}
+
+.microphone-level span.is-active {
+  height: 100%;
+  background: #1a7c5f;
+}
+
+.microphone-monitor[data-state="requesting"] .microphone-icon,
+.microphone-monitor[data-state="connecting"] .microphone-icon {
+  color: #7a470d;
+  background: #f7dfbd;
+}
+
+.microphone-monitor[data-state="active"] {
+  border-color: #8bb8a7;
+  background: transparent;
+  box-shadow: none;
+}
+
+.microphone-monitor[data-state="active"] .microphone-icon {
+  color: #fff;
+  background: #15745a;
+  box-shadow: 0 0 0 6px rgb(21 116 90 / 10%);
+}
+
+.microphone-monitor[data-state="error"] {
+  border-color: #d9aaa3;
+  background: transparent;
+}
+
+.microphone-monitor[data-state="error"] .microphone-icon {
+  color: #fff;
+  background: #a13b32;
+}
+
+.microphone-monitor[data-state="unavailable"] .microphone-icon {
+  color: #6b330d;
+  background: #f5d8bd;
 }
 
 .caption-stage {
   display: flex;
   min-height: clamp(340px, 46vh, 540px);
-  margin-top: 1rem;
+  margin-top: 0.85rem;
   overflow: hidden;
   flex-direction: column;
   border: 1px solid #173b30;
@@ -641,8 +847,7 @@ footer p {
   line-height: 1.65;
 }
 
-.source-panel > summary,
-.library-summary {
+.source-panel > summary {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -652,32 +857,27 @@ footer p {
   cursor: pointer;
 }
 
-.source-panel > summary::-webkit-details-marker,
-.library-summary::-webkit-details-marker {
+.source-panel > summary::-webkit-details-marker {
   display: none;
 }
 
-.source-panel > summary:focus-visible,
-.library-summary:focus-visible {
+.source-panel > summary:focus-visible {
   outline: 3px solid #d88d32;
   outline-offset: -3px;
 }
 
-.source-panel > summary > span:first-child,
-.library-summary > span:first-child {
+.source-panel > summary > span:first-child {
   display: grid;
   gap: 0.2rem;
 }
 
-.source-panel summary strong,
-.library-summary strong {
+.source-panel summary strong {
   font-family: Georgia, "Times New Roman", serif;
   font-size: 1.2rem;
   font-weight: 500;
 }
 
-.source-panel summary small,
-.library-summary small {
+.source-panel summary small {
   color: #707772;
   font-size: 0.78rem;
 }
@@ -689,19 +889,16 @@ footer p {
   white-space: nowrap;
 }
 
-.source-panel[open] > summary,
-.session-library[open] > .library-summary {
+.source-panel[open] > summary {
   border-bottom: 1px solid #ddd7ca;
 }
 
 .disclosure-label .when-open,
-.source-panel[open] > summary .when-closed,
-.session-library[open] > .library-summary .when-closed {
+.source-panel[open] > summary .when-closed {
   display: none;
 }
 
-.source-panel[open] > summary .when-open,
-.session-library[open] > .library-summary .when-open {
+.source-panel[open] > summary .when-open {
   display: inline;
 }
 
@@ -721,13 +918,6 @@ footer p {
   margin-top: 1rem;
 }
 
-.library-summary .eyebrow {
-  display: block;
-  margin: 0 0 0.15rem;
-  font-family: inherit;
-  font-size: 0.68rem;
-}
-
 @media (max-width: 760px) {
   .shell {
     padding-top: 2rem;
@@ -737,6 +927,39 @@ footer p {
     align-items: stretch;
     flex-direction: column;
     gap: 1.5rem;
+  }
+
+  .session-command-center {
+    grid-template-columns: 1fr;
+    padding: 0.9rem;
+  }
+
+  .session-command-center .session-controls,
+  .session-feedback {
+    width: 100%;
+  }
+
+  .session-command-center .session-controls {
+    padding: 0 0 0.9rem;
+  }
+
+  .session-feedback {
+    padding: 0.85rem 0 0;
+    border-top: 1px solid #ddd7ca;
+    border-left: 0;
+  }
+
+  .microphone-monitor {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .microphone-level {
+    grid-column: 1 / -1;
+    justify-content: stretch;
+  }
+
+  .microphone-level span {
+    flex: 1;
   }
 
   .caption-stage {
@@ -765,8 +988,7 @@ footer p {
     padding-left: 1rem;
   }
 
-  .source-panel > summary,
-  .library-summary {
+  .source-panel > summary {
     align-items: flex-start;
     padding: 1rem;
   }
@@ -777,6 +999,18 @@ footer p {
 
   .controls button {
     flex: 1;
+  }
+
+  .app-tabs {
+    display: flex;
+    gap: 0;
+    width: 100%;
+  }
+
+  .app-tab {
+    flex: 1;
+    padding-right: 0.65rem;
+    padding-left: 0.65rem;
   }
 
   .results-grid {

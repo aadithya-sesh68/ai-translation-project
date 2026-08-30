@@ -3,6 +3,11 @@ const stopButton = document.querySelector("#stop-button");
 const sessionTitleInput = document.querySelector("#session-title");
 const statusBadge = document.querySelector("#status-badge");
 const statusMessage = document.querySelector("#status-message");
+const microphoneMonitor = document.querySelector("#microphone-monitor");
+const microphoneLabel = document.querySelector("#microphone-label");
+const microphoneMessage = document.querySelector("#microphone-message");
+const microphoneLevel = document.querySelector("#microphone-level");
+const microphoneBars = [...microphoneLevel.querySelectorAll("span")];
 const transcriptList = document.querySelector("#transcript-list");
 const translationList = document.querySelector("#translation-list");
 const currentFrenchCaption = document.querySelector("#current-french-caption");
@@ -25,9 +30,20 @@ const downloadReport = document.querySelector("#download-report");
 const deleteSessionButton = document.querySelector("#delete-session");
 const savedEnglish = document.querySelector("#saved-english");
 const savedFrench = document.querySelector("#saved-french");
+const viewTabs = [...document.querySelectorAll('[role="tab"]')];
+const viewPanels = [...document.querySelectorAll('[role="tabpanel"]')];
 const SESSION_RESULTS_KEY = "oci-speech-results-v1";
+const ACTIVE_VIEW_KEY = "oratranslate-active-view-v1";
+const LIVE_SESSION_CHANNEL_NAME = "oratranslate-live-session-v1";
 const FRENCH_CAPTION_PLACEHOLDER = "La traduction française apparaîtra ici.";
 const { applicationPath, websocketUrl } = window.oraTranslateUrls;
+const tabId =
+  window.crypto?.randomUUID?.() ||
+  `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+const liveSessionChannel =
+  "BroadcastChannel" in window
+    ? new BroadcastChannel(LIVE_SESSION_CHANNEL_NAME)
+    : null;
 
 let socket = null;
 let mediaStream = null;
@@ -35,6 +51,9 @@ let audioContext = null;
 let mediaSource = null;
 let workletNode = null;
 let silentGain = null;
+let analyserNode = null;
+let microphoneSamples = null;
+let microphoneAnimationFrame = null;
 let englishSegments = [];
 let frenchSegments = [];
 let partialTranscript = "";
@@ -42,13 +61,303 @@ let transcriptParagraph = null;
 let translationParagraph = null;
 let diagnosticEvents = [];
 let stopping = false;
+let sessionStarting = false;
+let ownsLiveSession = false;
+let anotherLiveSessionActive = false;
+let sessionRejected = false;
+let availabilityRefreshTimer = null;
 let selectedSessionId = null;
+let archivePlaybackClaim = null;
 
 function setStatus(state, message) {
   statusBadge.dataset.state = state;
   statusBadge.textContent = state.replaceAll("_", " ");
   statusMessage.textContent = message;
 }
+
+function setMicrophoneState(state, label, message) {
+  microphoneMonitor.dataset.state = state;
+  microphoneLabel.textContent = label;
+  microphoneMessage.textContent = message;
+}
+
+function liveSessionInProgress() {
+  return (
+    sessionStarting ||
+    ownsLiveSession ||
+    anotherLiveSessionActive ||
+    socket !== null
+  );
+}
+
+function pauseSavedAudioForCoordination() {
+  archivePlaybackClaim = null;
+  if (!savedAudio.paused) {
+    savedAudio.pause();
+  }
+}
+
+function pauseArchivePlaybackAcrossTabs() {
+  pauseSavedAudioForCoordination();
+  liveSessionChannel?.postMessage({
+    type: "archive_playback_pause",
+    reason: "live_session",
+    tabId,
+  });
+}
+
+function claimArchivePlayback() {
+  const claim = {
+    type: "archive_playback_started",
+    tabId,
+    sessionId: selectedSessionId,
+    startedAt: Date.now(),
+  };
+  archivePlaybackClaim = claim;
+  liveSessionChannel?.postMessage(claim);
+}
+
+function claimComesAfter(candidate, current) {
+  if (!current) {
+    return true;
+  }
+  if (candidate.startedAt !== current.startedAt) {
+    return candidate.startedAt > current.startedAt;
+  }
+  return String(candidate.tabId) > String(current.tabId);
+}
+
+function handleRemoteArchivePlayback(claim) {
+  if (
+    !savedAudio.paused &&
+    claimComesAfter(claim, archivePlaybackClaim)
+  ) {
+    pauseSavedAudioForCoordination();
+  }
+}
+
+function renderMicrophoneLevel(level) {
+  const boundedLevel = Math.max(0, Math.min(100, Math.round(level)));
+  const activeBarCount = Math.ceil(
+    (boundedLevel / 100) * microphoneBars.length,
+  );
+
+  microphoneLevel.setAttribute("aria-valuenow", String(boundedLevel));
+  microphoneBars.forEach((bar, index) => {
+    bar.classList.toggle("is-active", index < activeBarCount);
+  });
+}
+
+function stopMicrophoneMeter() {
+  if (microphoneAnimationFrame !== null) {
+    window.cancelAnimationFrame(microphoneAnimationFrame);
+  }
+  microphoneAnimationFrame = null;
+  microphoneSamples = null;
+  renderMicrophoneLevel(0);
+}
+
+function startMicrophoneMeter() {
+  stopMicrophoneMeter();
+  microphoneSamples = new Uint8Array(analyserNode.fftSize);
+
+  const updateMeter = () => {
+    if (!analyserNode || !microphoneSamples) {
+      return;
+    }
+
+    analyserNode.getByteTimeDomainData(microphoneSamples);
+    let sumOfSquares = 0;
+    microphoneSamples.forEach((sample) => {
+      const centeredSample = (sample - 128) / 128;
+      sumOfSquares += centeredSample * centeredSample;
+    });
+    const rootMeanSquare = Math.sqrt(
+      sumOfSquares / microphoneSamples.length,
+    );
+    const displayLevel = Math.max(0, rootMeanSquare - 0.01) * 650;
+    renderMicrophoneLevel(displayLevel);
+
+    microphoneAnimationFrame = window.requestAnimationFrame(updateMeter);
+  };
+
+  microphoneAnimationFrame = window.requestAnimationFrame(updateMeter);
+}
+
+function activateView(selectedTab, focusTab = false) {
+  if (!selectedTab) {
+    return;
+  }
+
+  viewTabs.forEach((tab) => {
+    const selected = tab === selectedTab;
+    tab.setAttribute("aria-selected", String(selected));
+    tab.tabIndex = selected ? 0 : -1;
+  });
+  viewPanels.forEach((panel) => {
+    panel.hidden = panel.id !== selectedTab.dataset.panel;
+  });
+
+  try {
+    sessionStorage.setItem(ACTIVE_VIEW_KEY, selectedTab.id);
+  } catch {
+    // Tab navigation remains available without browser storage.
+  }
+
+  if (selectedTab.id === "session-archives-tab") {
+    loadSessions();
+  }
+  if (focusTab) {
+    selectedTab.focus();
+  }
+}
+
+function restoreActiveView() {
+  let selectedTabId = "live-session-tab";
+  try {
+    selectedTabId = sessionStorage.getItem(ACTIVE_VIEW_KEY) || selectedTabId;
+  } catch {
+    // Use the default live-session tab when browser storage is unavailable.
+  }
+
+  activateView(
+    viewTabs.find((tab) => tab.id === selectedTabId) || viewTabs[0],
+  );
+}
+
+viewTabs.forEach((tab, index) => {
+  tab.addEventListener("click", () => activateView(tab));
+  tab.addEventListener("keydown", (event) => {
+    let nextIndex = null;
+    if (event.key === "ArrowRight") {
+      nextIndex = (index + 1) % viewTabs.length;
+    } else if (event.key === "ArrowLeft") {
+      nextIndex = (index - 1 + viewTabs.length) % viewTabs.length;
+    } else if (event.key === "Home") {
+      nextIndex = 0;
+    } else if (event.key === "End") {
+      nextIndex = viewTabs.length - 1;
+    }
+
+    if (nextIndex !== null) {
+      event.preventDefault();
+      activateView(viewTabs[nextIndex], true);
+    }
+  });
+});
+
+function updateSessionControls() {
+  const localSessionActive =
+    sessionStarting || ownsLiveSession || socket !== null;
+  startButton.disabled =
+    localSessionActive || stopping || anotherLiveSessionActive;
+  stopButton.disabled = !ownsLiveSession || stopping;
+  sessionTitleInput.disabled = localSessionActive || anotherLiveSessionActive;
+}
+
+function scheduleAvailabilityRefresh() {
+  window.clearTimeout(availabilityRefreshTimer);
+  availabilityRefreshTimer = null;
+  if (!anotherLiveSessionActive || ownsLiveSession) {
+    return;
+  }
+
+  availabilityRefreshTimer = window.setTimeout(() => {
+    refreshLiveSessionAvailability().catch(() => {});
+  }, 2000);
+}
+
+function setAnotherLiveSessionActive(active, showStatus = true) {
+  anotherLiveSessionActive = Boolean(active) && !ownsLiveSession;
+  updateSessionControls();
+
+  if (anotherLiveSessionActive) {
+    pauseSavedAudioForCoordination();
+  }
+
+  if (anotherLiveSessionActive && showStatus && !ownsLiveSession) {
+    setStatus("unavailable", "Another OraTranslate session is already active.");
+    setMicrophoneState(
+      "unavailable",
+      "Microphone unavailable",
+      "Another browser tab or device owns the live session.",
+    );
+  } else if (
+    !anotherLiveSessionActive &&
+    statusBadge.dataset.state === "unavailable"
+  ) {
+    setStatus("idle", "Ready to start a live session.");
+    setMicrophoneState(
+      "idle",
+      "Microphone ready",
+      "Start a session to check the audio input.",
+    );
+  }
+
+  scheduleAvailabilityRefresh();
+}
+
+async function refreshLiveSessionAvailability(showStatus = true) {
+  try {
+    const response = await fetch(applicationPath("/api/live-session"), {
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      return anotherLiveSessionActive;
+    }
+    const payload = await response.json();
+    setAnotherLiveSessionActive(payload.active, showStatus);
+  } catch {
+    // The WebSocket remains authoritative if this convenience check fails.
+  }
+  return anotherLiveSessionActive;
+}
+
+function broadcastLiveSessionState(state) {
+  liveSessionChannel?.postMessage({
+    type: "live_session_state",
+    state,
+    tabId,
+  });
+}
+
+function markLocalSessionActive() {
+  if (ownsLiveSession) {
+    return;
+  }
+  ownsLiveSession = true;
+  sessionStarting = false;
+  sessionRejected = false;
+  anotherLiveSessionActive = false;
+  updateSessionControls();
+  pauseSavedAudioForCoordination();
+  broadcastLiveSessionState("active");
+}
+
+liveSessionChannel?.addEventListener("message", (event) => {
+  if (event.data?.tabId === tabId) {
+    return;
+  }
+
+  switch (event.data?.type) {
+    case "live_session_state":
+      if (event.data.state === "active" && !ownsLiveSession) {
+        pauseSavedAudioForCoordination();
+        setAnotherLiveSessionActive(true);
+      } else {
+        refreshLiveSessionAvailability().catch(() => {});
+      }
+      break;
+    case "archive_playback_started":
+      handleRemoteArchivePlayback(event.data);
+      break;
+    case "archive_playback_pause":
+      pauseSavedAudioForCoordination();
+      break;
+    default:
+      break;
+  }
+});
 
 function saveResults() {
   try {
@@ -462,6 +771,9 @@ async function beginAudioCapture(sampleRate) {
   mediaSource = audioContext.createMediaStreamSource(mediaStream);
   workletNode = new AudioWorkletNode(audioContext, "pcm16-resampler");
   silentGain = audioContext.createGain();
+  analyserNode = audioContext.createAnalyser();
+  analyserNode.fftSize = 256;
+  analyserNode.smoothingTimeConstant = 0.72;
   silentGain.gain.value = 0;
 
   workletNode.port.onmessage = (event) => {
@@ -471,19 +783,29 @@ async function beginAudioCapture(sampleRate) {
   };
 
   mediaSource.connect(workletNode);
+  mediaSource.connect(analyserNode);
   workletNode.connect(silentGain);
   silentGain.connect(audioContext.destination);
 
+  startMicrophoneMeter();
+  setMicrophoneState(
+    "active",
+    "Microphone active",
+    "Audio is being captured. Speak normally and watch the level respond.",
+  );
   setStatus("listening", `Listening at ${sampleRate / 1000} kHz PCM`);
 }
 
 async function releaseAudio() {
+  stopMicrophoneMeter();
+
   if (workletNode) {
     workletNode.port.postMessage({ type: "flush" });
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
 
   mediaSource?.disconnect();
+  analyserNode?.disconnect();
   workletNode?.disconnect();
   silentGain?.disconnect();
   mediaStream?.getTracks().forEach((track) => track.stop());
@@ -495,6 +817,7 @@ async function releaseAudio() {
   mediaStream = null;
   audioContext = null;
   mediaSource = null;
+  analyserNode = null;
   workletNode = null;
   silentGain = null;
 }
@@ -502,6 +825,14 @@ async function releaseAudio() {
 function handleServerEvent(event) {
   switch (event.type) {
     case "session_status":
+      if (event.state === "connecting") {
+        markLocalSessionActive();
+        setMicrophoneState(
+          "connecting",
+          "Microphone connected",
+          "Preparing the live speech connection...",
+        );
+      }
       setStatus(event.state, event.message);
       break;
     case "session_ready":
@@ -518,12 +849,32 @@ function handleServerEvent(event) {
     case "error":
       appendError(event);
       setStatus("error", `${event.stage || "OCI"} error`);
+      if (event.stage === "speech" || event.stage === "session") {
+        setMicrophoneState(
+          "error",
+          "Microphone stream interrupted",
+          event.message || "The live speech connection reported an error.",
+        );
+      }
       break;
     case "session_stopped":
       setStatus("stopped", event.message);
+      setMicrophoneState(
+        "idle",
+        "Microphone stopped",
+        "The session audio capture has ended.",
+      );
       break;
     case "session_saved":
       loadSessions(event.session?.session_id || null);
+      break;
+    case "session_rejected":
+      sessionRejected = true;
+      sessionStarting = false;
+      ownsLiveSession = false;
+      setAnotherLiveSessionActive(true);
+      releaseAudio().catch(() => {});
+      socket?.close();
       break;
     default:
       break;
@@ -531,23 +882,44 @@ function handleServerEvent(event) {
 }
 
 function handleClientError(error) {
+  if (sessionRejected) {
+    return;
+  }
   const message = error?.message || String(error);
   appendError({ stage: "browser", message });
   setStatus("error", message);
+  setMicrophoneState("error", "Microphone unavailable", message);
+  sessionStarting = false;
   releaseAudio().catch(() => {});
   socket?.close();
-  startButton.disabled = false;
-  stopButton.disabled = true;
-  sessionTitleInput.disabled = false;
+  updateSessionControls();
 }
 
 async function startSession() {
+  if (sessionStarting || ownsLiveSession || anotherLiveSessionActive) {
+    return;
+  }
+
+  sessionStarting = true;
+  sessionRejected = false;
+  updateSessionControls();
+
+  if (await refreshLiveSessionAvailability()) {
+    sessionStarting = false;
+    updateSessionControls();
+    return;
+  }
+
+  pauseArchivePlaybackAcrossTabs();
   resetResults();
   stopping = false;
-  startButton.disabled = true;
-  stopButton.disabled = false;
-  sessionTitleInput.disabled = true;
+  updateSessionControls();
   setStatus("microphone", "Waiting for microphone permission...");
+  setMicrophoneState(
+    "requesting",
+    "Microphone permission",
+    "Allow microphone access when your browser asks.",
+  );
 
   try {
     audioContext = new AudioContext();
@@ -559,6 +931,11 @@ async function startSession() {
         autoGainControl: true,
       },
     });
+    setMicrophoneState(
+      "connecting",
+      "Microphone connected",
+      "Connecting securely to the live speech service...",
+    );
 
     socket = new WebSocket(websocketUrl("/ws/live"));
     socket.binaryType = "arraybuffer";
@@ -576,17 +953,44 @@ async function startSession() {
       handleServerEvent(JSON.parse(message.data));
     };
     socket.onerror = () => {
-      handleClientError(new Error("The browser couldn't reach the server."));
+      if (!sessionRejected) {
+        handleClientError(new Error("The browser couldn't reach the server."));
+      }
     };
     socket.onclose = async () => {
+      const wasOwner = ownsLiveSession;
       await releaseAudio();
-      startButton.disabled = false;
-      stopButton.disabled = true;
-      sessionTitleInput.disabled = false;
-      if (!stopping && statusBadge.dataset.state !== "error") {
+      socket = null;
+      sessionStarting = false;
+      ownsLiveSession = false;
+      stopping = false;
+      updateSessionControls();
+
+      if (wasOwner) {
+        broadcastLiveSessionState("check");
+      }
+      await refreshLiveSessionAvailability(false);
+
+      if (
+        !sessionRejected &&
+        microphoneMonitor.dataset.state !== "error" &&
+        microphoneMonitor.dataset.state !== "idle"
+      ) {
+        setMicrophoneState(
+          "idle",
+          "Microphone disconnected",
+          "Start a new session when you are ready.",
+        );
+      }
+
+      if (
+        !sessionRejected &&
+        statusBadge.dataset.state !== "error" &&
+        statusBadge.dataset.state !== "stopped"
+      ) {
         setStatus("disconnected", "The server connection closed.");
       }
-      socket = null;
+      sessionRejected = false;
     };
   } catch (error) {
     handleClientError(error);
@@ -599,15 +1003,21 @@ async function stopSession() {
   }
 
   stopping = true;
-  stopButton.disabled = true;
+  updateSessionControls();
   setStatus("finalizing", "Sending the final audio and translating it...");
+  setMicrophoneState(
+    "connecting",
+    "Microphone stopped",
+    "Finalizing the session recording and translations...",
+  );
   await releaseAudio();
 
   if (socket?.readyState === WebSocket.OPEN) {
     socket.send(JSON.stringify({ type: "stop" }));
   } else {
     socket?.close();
-    startButton.disabled = false;
+    sessionStarting = false;
+    updateSessionControls();
   }
 }
 
@@ -615,5 +1025,29 @@ startButton.addEventListener("click", startSession);
 stopButton.addEventListener("click", stopSession);
 refreshSessionsButton.addEventListener("click", () => loadSessions());
 deleteSessionButton.addEventListener("click", deleteSelectedSession);
+savedAudio.addEventListener("play", () => {
+  if (liveSessionInProgress()) {
+    pauseSavedAudioForCoordination();
+    return;
+  }
+  claimArchivePlayback();
+});
+savedAudio.addEventListener("pause", () => {
+  archivePlaybackClaim = null;
+});
+savedAudio.addEventListener("ended", () => {
+  archivePlaybackClaim = null;
+});
 restoreResults();
-loadSessions();
+restoreActiveView();
+refreshLiveSessionAvailability().catch(() => {});
+
+window.addEventListener("focus", () => {
+  refreshLiveSessionAvailability().catch(() => {});
+});
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") {
+    refreshLiveSessionAvailability().catch(() => {});
+  }
+});

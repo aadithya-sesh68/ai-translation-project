@@ -104,8 +104,19 @@ not yet implemented in this prototype.
 7. The server closes the MP3 recording and saves English, French, metadata,
    safe OCI error details, and an operational session report in a
    session-specific folder.
-8. The **Session recordings** section refreshes automatically so the completed
-   session can be played and its text outputs reviewed or downloaded.
+8. The **Session Archives** tab refreshes automatically so the completed
+   session can be played and its text outputs reviewed or downloaded without
+   crowding the primary **Live Session** view.
+
+Only one live audio-capture session can run in a server process. The server
+authoritatively rejects a second `/ws/live` connection while the first session
+is active. Browser tabs on the same origin also coordinate through
+`BroadcastChannel`, disable **Start session**, and show that another
+OraTranslate session is active. Tabs reconcile that convenience state against
+`GET /api/live-session`, so a closed or crashed tab doesn't leave the controls
+permanently disabled. The slot is released after normal completion,
+disconnection, startup failure, or cleanup. This restriction applies only to
+live capture; it doesn't prevent users from reviewing saved sessions.
 
 Live English text, French translations, and displayed diagnostics are also kept
 temporarily in the browser tab's session storage so refreshing the page can

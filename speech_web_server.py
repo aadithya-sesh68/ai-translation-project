@@ -48,6 +48,35 @@ STATIC_FILES = {
 }
 
 
+class LiveSessionCoordinator:
+    """Allow one authoritative live audio-capture session per server process."""
+
+    def __init__(self) -> None:
+        self._owner: asyncio.Task[Any] | None = None
+
+    @property
+    def active(self) -> bool:
+        return self._owner is not None and not self._owner.done()
+
+    def try_acquire(self, owner: asyncio.Task[Any]) -> bool:
+        """Atomically claim the single live-session slot on this event loop."""
+
+        if self.active:
+            return False
+
+        self._owner = owner
+        owner.add_done_callback(self.release)
+        return True
+
+    def release(self, owner: asyncio.Task[Any]) -> None:
+        if self._owner is owner:
+            self._owner = None
+
+
+LIVE_SESSION_COORDINATOR = LiveSessionCoordinator()
+LIVE_SESSION_ACTIVE_MESSAGE = "Another OraTranslate session is already active."
+
+
 def allowed_websocket_origins(port: int) -> list[str]:
     """Return local and explicitly configured public browser origins."""
 
@@ -186,6 +215,17 @@ def process_http_request(
     if path in {"/ws/live", "/ws/translation-test"}:
         return None
 
+    if path == "/api/live-session":
+        if request.method != "GET":
+            return json_response(
+                HTTPStatus.METHOD_NOT_ALLOWED,
+                {"message": "Only GET is supported for live-session status."},
+            )
+        return json_response(
+            HTTPStatus.OK,
+            {"active": LIVE_SESSION_COORDINATOR.active},
+        )
+
     api_response = session_api_response(request, path)
     if api_response is not None:
         return api_response
@@ -251,6 +291,29 @@ async def send_events(
 async def handle_live_session(websocket: ServerConnection) -> None:
     if not websocket.request or websocket.request.path != "/ws/live":
         await websocket.close(code=1008, reason="Unsupported WebSocket path")
+        return
+
+    owner = asyncio.current_task()
+    if owner is None or not LIVE_SESSION_COORDINATOR.try_acquire(owner):
+        log_event(
+            LOGGER,
+            logging.WARNING,
+            "live_session_rejected",
+            LIVE_SESSION_ACTIVE_MESSAGE,
+            stage="session",
+            code="LIVE_SESSION_ACTIVE",
+        )
+        await websocket.send(
+            json.dumps(
+                {
+                    "type": "session_rejected",
+                    "stage": "session",
+                    "code": "LIVE_SESSION_ACTIVE",
+                    "message": LIVE_SESSION_ACTIVE_MESSAGE,
+                }
+            )
+        )
+        await websocket.close(code=1013, reason=LIVE_SESSION_ACTIVE_MESSAGE)
         return
 
     event_queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
@@ -444,6 +507,7 @@ async def handle_live_session(websocket: ServerConnection) -> None:
 
         await event_queue.put(None)
         await sender_task
+        LIVE_SESSION_COORDINATOR.release(owner)
         await websocket.close()
 
 
