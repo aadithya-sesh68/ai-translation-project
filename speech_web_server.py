@@ -327,6 +327,7 @@ async def handle_live_session(websocket: ServerConnection) -> None:
     session_started = False
     stop_requested = False
 
+    #Record event in Session Archive and send event to browser
     def publish_and_record(event: dict[str, Any]) -> None:
         if archive:
             archive.record_event(event)
