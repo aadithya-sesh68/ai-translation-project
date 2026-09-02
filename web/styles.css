@@ -1036,6 +1036,23 @@ p {
   padding: var(--rds-space-24);
 }
 
+.host-transcript-panel {
+  display: flex;
+  height: calc(var(--caption-min-height) + var(--result-list-max-height));
+  flex-direction: column;
+}
+
+.host-transcript-panel .result-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+}
+
+.host-transcript-panel .continuous-text {
+  font-size: var(--rds-font-size-lg);
+  line-height: var(--rds-line-height-xl);
+}
+
 .history-heading {
   padding-bottom: var(--rds-space-16);
   border-bottom: var(--rds-border-width) solid var(--rds-color-border-divider);
@@ -1574,6 +1591,10 @@ p {
   .library-grid,
   .role-options {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .host-transcript-panel {
+    height: calc(var(--caption-min-height) + var(--rds-space-48));
   }
 
   .session-command-center {

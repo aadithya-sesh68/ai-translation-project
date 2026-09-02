@@ -32,7 +32,8 @@ class LiveFrontendStructureTest(unittest.TestCase):
         listener_surface = html.split('id="listener-workspace"', 1)[1].split(
             'id="session-archives-panel"', 1
         )[0]
-        self.assertIn('id="current-english-caption"', host_surface)
+        self.assertNotIn('id="current-english-caption"', host_surface)
+        self.assertIn('class="history-panel host-transcript-panel"', host_surface)
         self.assertIn('id="transcript-list"', host_surface)
         self.assertNotIn('id="current-french-caption"', host_surface)
         self.assertIn('id="current-french-caption"', listener_surface)
@@ -113,14 +114,41 @@ class LiveFrontendStructureTest(unittest.TestCase):
         self.assertIn("const latestTranslation = frenchSegments.at(-1);", script)
         self.assertIn("currentFrenchCaption.textContent", script)
 
-    def test_only_current_role_captions_are_live_regions(self) -> None:
+    def test_host_transcript_scrolls_without_interrupting_review(self) -> None:
+        styles = (PROJECT_ROOT / "web" / "styles.css").read_text(
+            encoding="utf-8"
+        )
+        script = (PROJECT_ROOT / "web" / "app.js").read_text(
+            encoding="utf-8"
+        )
+
+        host_panel_styles = styles.split(".host-transcript-panel {", 1)[1].split(
+            "}", 1
+        )[0]
+        host_list_styles = styles.split(
+            ".host-transcript-panel .result-list {", 1
+        )[1].split("}", 1)[0]
+
+        self.assertIn(
+            "height: calc(var(--caption-min-height) + var(--result-list-max-height));",
+            host_panel_styles,
+        )
+        self.assertIn("min-height: 0;", host_list_styles)
+        self.assertIn("function isNearScrollEnd(element)", script)
+        self.assertIn(
+            "const followLatest = isNearScrollEnd(transcriptList);",
+            script,
+        )
+        self.assertIn(
+            "if (followLatest) transcriptList.scrollTop = transcriptList.scrollHeight;",
+            script,
+        )
+
+    def test_only_listener_current_caption_is_a_live_region(self) -> None:
         html = (PROJECT_ROOT / "web" / "index.html").read_text(
             encoding="utf-8"
         )
 
-        english_caption = html.split('id="current-english-caption"', 1)[1].split(
-            ">", 1
-        )[0]
         french_caption = html.split('id="current-french-caption"', 1)[1].split(
             ">", 1
         )[0]
@@ -131,8 +159,8 @@ class LiveFrontendStructureTest(unittest.TestCase):
             ">", 1
         )[0]
 
-        self.assertIn('aria-live="polite"', english_caption)
         self.assertIn('aria-live="polite"', french_caption)
+        self.assertNotIn('id="current-english-caption"', html)
         self.assertNotIn("aria-live", transcript_history)
         self.assertNotIn("aria-live", translation_history)
 
@@ -235,7 +263,9 @@ class LiveFrontendStructureTest(unittest.TestCase):
         status_position = command_center.index('class="status-panel"')
         microphone_position = command_center.index('id="microphone-monitor"')
         content_position = host_surface.index('class="live-item-overview__content"')
-        caption_position = host_surface.index('class="caption-stage"')
+        transcript_position = host_surface.index(
+            'class="history-panel host-transcript-panel"'
+        )
 
         self.assertGreater(overview_position, 0)
         self.assertIn('<aside class="session-command-center"', host_surface)
@@ -243,7 +273,7 @@ class LiveFrontendStructureTest(unittest.TestCase):
         self.assertLess(controls_position, status_position)
         self.assertLess(status_position, microphone_position)
         self.assertLess(overview_position, content_position)
-        self.assertLess(content_position, caption_position)
+        self.assertLess(content_position, transcript_position)
         self.assertIn('class="session-feedback"', command_center)
         self.assertIn('role="meter"', command_center)
         self.assertIn(

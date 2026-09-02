@@ -24,7 +24,6 @@ const hostSharePanel = $("#host-share-panel");
 const hostJoinCode = $("#host-join-code");
 const copyJoinCodeButton = $("#copy-join-code");
 const hostListenerCount = $("#host-listener-count");
-const currentEnglishCaption = $("#current-english-caption");
 const transcriptList = $("#transcript-list");
 const emptyTranscript = $("#empty-transcript");
 const hostAlerts = $("#host-alerts");
@@ -73,8 +72,8 @@ const ACTIVE_VIEW_KEY = "oratranslate-active-view-v1";
 const HOST_SESSION_KEY = "oratranslate-host-session-v2";
 const LISTENER_SESSION_KEY = "oratranslate-listener-session-v2";
 const LIVE_SESSION_CHANNEL_NAME = "oratranslate-live-session-v2";
-const ENGLISH_CAPTION_PLACEHOLDER = "The latest English sentence will appear here.";
 const FRENCH_CAPTION_PLACEHOLDER = "La traduction française apparaîtra ici.";
+const AUTO_SCROLL_THRESHOLD = 48;
 const SESSION_TITLE_CONFLICT_MESSAGE =
   "A saved session already uses this name. Choose a different name.";
 const { applicationPath, websocketUrl } = window.oraTranslateUrls;
@@ -317,8 +316,6 @@ function resetHostTranscript() {
   englishSegments = [];
   partialTranscript = "";
   transcriptParagraph = null;
-  currentEnglishCaption.textContent = ENGLISH_CAPTION_PLACEHOLDER;
-  currentEnglishCaption.classList.add("waiting-caption");
   hostAlerts.replaceChildren();
 }
 
@@ -332,7 +329,12 @@ function resetListenerTranscript() {
   translationAlerts.replaceChildren();
 }
 
+function isNearScrollEnd(element) {
+  return element.scrollHeight - element.scrollTop - element.clientHeight <= AUTO_SCROLL_THRESHOLD;
+}
+
 function renderTranscript() {
+  const followLatest = isNearScrollEnd(transcriptList);
   emptyTranscript.hidden = true;
   if (!transcriptParagraph) {
     transcriptParagraph = document.createElement("p");
@@ -348,9 +350,7 @@ function renderTranscript() {
     partial.textContent = partialTranscript;
     transcriptParagraph.append(partial);
   }
-  currentEnglishCaption.textContent = partialTranscript || englishSegments.at(-1) || ENGLISH_CAPTION_PLACEHOLDER;
-  currentEnglishCaption.classList.toggle("waiting-caption", !partialTranscript && !englishSegments.length);
-  transcriptList.scrollTop = transcriptList.scrollHeight;
+  if (followLatest) transcriptList.scrollTop = transcriptList.scrollHeight;
 }
 
 function appendTranscript(text, isFinal) {
