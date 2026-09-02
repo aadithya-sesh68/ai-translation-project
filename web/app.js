@@ -1,6 +1,7 @@
 const startButton = document.querySelector("#start-button");
 const stopButton = document.querySelector("#stop-button");
 const sessionTitleInput = document.querySelector("#session-title");
+const sessionTitleMessage = document.querySelector("#session-title-message");
 const statusBadge = document.querySelector("#status-badge");
 const statusMessage = document.querySelector("#status-message");
 const microphoneMonitor = document.querySelector("#microphone-monitor");
@@ -48,6 +49,8 @@ const SESSION_RESULTS_KEY = "oci-speech-results-v1";
 const ACTIVE_VIEW_KEY = "oratranslate-active-view-v1";
 const LIVE_SESSION_CHANNEL_NAME = "oratranslate-live-session-v1";
 const FRENCH_CAPTION_PLACEHOLDER = "La traduction française apparaîtra ici.";
+const SESSION_TITLE_CONFLICT_MESSAGE =
+  "A saved session already uses this name. Choose a different name.";
 const { applicationPath, websocketUrl } = window.oraTranslateUrls;
 const tabId =
   window.crypto?.randomUUID?.() ||
@@ -91,6 +94,53 @@ function setMicrophoneState(state, label, message) {
   microphoneMonitor.dataset.state = state;
   microphoneLabel.textContent = label;
   microphoneMessage.textContent = message;
+}
+
+function normalizeSessionTitle(value) {
+  return String(value || "").trim().replace(/\s+/g, " ").slice(0, 120);
+}
+
+function setSessionTitleError(message = "") {
+  sessionTitleInput.setCustomValidity(message);
+  sessionTitleInput.toggleAttribute("aria-invalid", Boolean(message));
+  sessionTitleMessage.textContent = message;
+  sessionTitleMessage.hidden = !message;
+}
+
+async function validateSessionTitleForStart() {
+  const title = normalizeSessionTitle(sessionTitleInput.value);
+  sessionTitleInput.value = title;
+  setSessionTitleError();
+
+  if (!title) {
+    const message = "Enter a session name.";
+    setSessionTitleError(message);
+    sessionTitleInput.focus();
+    return null;
+  }
+
+  try {
+    const response = await fetch(applicationPath("/api/sessions"), {
+      cache: "no-store",
+    });
+    if (response.ok) {
+      const payload = await response.json();
+      const titleKey = title.toLocaleLowerCase();
+      const duplicate = (payload.sessions || []).some(
+        (session) =>
+          normalizeSessionTitle(session.title).toLocaleLowerCase() === titleKey,
+      );
+      if (duplicate) {
+        setSessionTitleError(SESSION_TITLE_CONFLICT_MESSAGE);
+        sessionTitleInput.focus();
+        return null;
+      }
+    }
+  } catch {
+    // The WebSocket performs the authoritative validation if this check fails.
+  }
+
+  return title;
 }
 
 function liveSessionInProgress() {
@@ -376,6 +426,7 @@ function saveResults() {
     sessionStorage.setItem(
       SESSION_RESULTS_KEY,
       JSON.stringify({
+        sessionTitle: normalizeSessionTitle(sessionTitleInput.value),
         englishSegments,
         frenchSegments,
         diagnosticEvents,
@@ -570,6 +621,10 @@ function restoreResults() {
   }
 
   resetResults(false);
+  if (typeof savedResults.sessionTitle === "string") {
+    sessionTitleInput.value = normalizeSessionTitle(savedResults.sessionTitle);
+    setSessionTitleError();
+  }
   englishSegments = Array.isArray(savedResults.englishSegments)
     ? savedResults.englishSegments.filter((text) => typeof text === "string")
     : [];
@@ -595,7 +650,10 @@ function restoreResults() {
     frenchSegments.length ||
     diagnosticEvents.length
   ) {
-    setStatus("restored", "Restored results from before the refresh.");
+    setStatus(
+      "restored",
+      "Restored the previous session name and results after refresh.",
+    );
   }
 }
 
@@ -948,7 +1006,19 @@ function handleServerEvent(event) {
       sessionRejected = true;
       sessionStarting = false;
       ownsLiveSession = false;
-      setAnotherLiveSessionActive(true);
+      if (event.code === "LIVE_SESSION_ACTIVE") {
+        setAnotherLiveSessionActive(true);
+      } else {
+        setSessionTitleError(event.message);
+        setStatus("idle", "Ready to start a live session.");
+        setMicrophoneState(
+          "idle",
+          "Microphone ready",
+          "Update the session name and try again.",
+        );
+        updateSessionControls();
+        sessionTitleInput.focus();
+      }
       releaseAudio().catch(() => {});
       socket?.close();
       break;
@@ -980,6 +1050,14 @@ async function startSession() {
   sessionRejected = false;
   updateSessionControls();
 
+  const sessionTitle = await validateSessionTitleForStart();
+  if (!sessionTitle) {
+    sessionStarting = false;
+    updateSessionControls();
+    sessionTitleInput.focus();
+    return;
+  }
+
   if (await refreshLiveSessionAvailability()) {
     sessionStarting = false;
     updateSessionControls();
@@ -988,6 +1066,7 @@ async function startSession() {
 
   pauseArchivePlaybackAcrossTabs();
   resetResults();
+  saveResults();
   stopping = false;
   updateSessionControls();
   setStatus("microphone", "Waiting for microphone permission...");
@@ -1020,7 +1099,7 @@ async function startSession() {
       socket.send(
         JSON.stringify({
           type: "start",
-          title: sessionTitleInput.value,
+          title: sessionTitle,
         }),
       );
     };
@@ -1066,6 +1145,9 @@ async function startSession() {
       ) {
         setStatus("disconnected", "The server connection closed.");
       }
+      if (sessionRejected && sessionTitleInput.hasAttribute("aria-invalid")) {
+        sessionTitleInput.focus();
+      }
       sessionRejected = false;
     };
   } catch (error) {
@@ -1099,6 +1181,11 @@ async function stopSession() {
 
 startButton.addEventListener("click", startSession);
 stopButton.addEventListener("click", stopSession);
+sessionTitleInput.addEventListener("input", () => {
+  if (sessionTitleInput.value.trim()) {
+    setSessionTitleError();
+  }
+});
 refreshSessionsButton.addEventListener("click", () => loadSessions());
 deleteSessionButton.addEventListener("click", openDeleteSessionDialog);
 cancelDeleteSessionButton.addEventListener("click", () => {

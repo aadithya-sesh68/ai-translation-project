@@ -520,6 +520,21 @@ p {
   line-height: var(--rds-line-height-xs);
 }
 
+.session-field-assistance {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--rds-space-8);
+}
+
+.required-message {
+  margin-left: auto;
+  color: var(--rds-color-text-secondary);
+  font-size: var(--rds-font-size-xs);
+  line-height: var(--rds-line-height-xs);
+  white-space: nowrap;
+}
+
 .session-controls input {
   width: 100%;
   height: var(--rds-control-height-lg);
@@ -532,6 +547,16 @@ p {
 
 .session-controls input::placeholder {
   color: var(--rds-color-text-secondary);
+}
+
+.session-controls input[aria-invalid="true"] {
+  border-color: var(--rds-color-danger-border);
+}
+
+.field-message {
+  color: var(--rds-color-danger-text);
+  font-size: var(--rds-font-size-xs);
+  line-height: var(--rds-line-height-xs);
 }
 
 .controls {

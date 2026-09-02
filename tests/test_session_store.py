@@ -14,7 +14,14 @@ import soundfile
 from websockets.datastructures import Headers
 from websockets.http11 import Request
 
-from session_store import SessionArchive, get_session, list_sessions
+from session_store import (
+    SESSION_TITLE_CONFLICT_MESSAGE,
+    SESSION_TITLE_REQUIRED_MESSAGE,
+    SessionArchive,
+    SessionTitleValidationError,
+    get_session,
+    list_sessions,
+)
 from speech_web_server import session_api_response
 
 
@@ -97,6 +104,25 @@ class SessionStoreTest(unittest.TestCase):
             report["language_translation"]["latency_ms"]["median"],
         )
         self.assertEqual(0, report["errors"]["total"])
+        self.assertEqual(1, len(list_sessions(self.root)))
+
+    def test_session_title_is_required_before_archive_creation(self) -> None:
+        with self.assertRaises(SessionTitleValidationError) as context:
+            SessionArchive("   ", self.root)
+
+        self.assertEqual("SESSION_TITLE_REQUIRED", context.exception.code)
+        self.assertEqual(SESSION_TITLE_REQUIRED_MESSAGE, str(context.exception))
+        self.assertEqual([], list(self.root.iterdir()))
+
+    def test_saved_session_titles_are_unique_after_normalization(self) -> None:
+        archive = SessionArchive("Customer Session", self.root)
+        archive.finalize("completed")
+
+        with self.assertRaises(SessionTitleValidationError) as context:
+            SessionArchive("  customer   session  ", self.root)
+
+        self.assertEqual("SESSION_TITLE_CONFLICT", context.exception.code)
+        self.assertEqual(SESSION_TITLE_CONFLICT_MESSAGE, str(context.exception))
         self.assertEqual(1, len(list_sessions(self.root)))
 
     def test_session_list_api_returns_public_urls(self) -> None:

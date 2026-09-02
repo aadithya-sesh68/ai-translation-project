@@ -172,6 +172,35 @@ class LiveFrontendStructureTest(unittest.TestCase):
             script,
         )
 
+    def test_session_name_is_required_unique_and_restored(self) -> None:
+        html = (PROJECT_ROOT / "web" / "index.html").read_text(
+            encoding="utf-8"
+        )
+        script = (PROJECT_ROOT / "web" / "app.js").read_text(
+            encoding="utf-8"
+        )
+
+        title_input = html.split('id="session-title"', 1)[1].split("/>", 1)[0]
+        title_input_position = html.index('id="session-title"')
+        assistance_position = html.index('class="session-field-assistance"')
+        required_position = html.index('class="required-message"')
+        title_validation = script.split(
+            "async function validateSessionTitleForStart()", 1
+        )[1].split("function liveSessionInProgress()", 1)[0]
+
+        self.assertIn("required", title_input)
+        self.assertIn('aria-describedby="session-title-message"', title_input)
+        self.assertIn('id="session-title-message"', html)
+        self.assertLess(title_input_position, assistance_position)
+        self.assertLess(assistance_position, required_position)
+        self.assertNotIn('class="session-field-label"', html)
+        self.assertIn("validateSessionTitleForStart()", script)
+        self.assertIn('applicationPath("/api/sessions")', script)
+        self.assertIn("SESSION_TITLE_CONFLICT_MESSAGE", script)
+        self.assertIn("sessionTitle: normalizeSessionTitle", script)
+        self.assertIn("savedResults.sessionTitle", script)
+        self.assertNotIn('setStatus("error"', title_validation)
+
     def test_live_controls_use_an_item_overview_left_card(self) -> None:
         html = (PROJECT_ROOT / "web" / "index.html").read_text(
             encoding="utf-8"

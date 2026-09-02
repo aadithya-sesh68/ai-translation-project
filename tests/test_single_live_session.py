@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import tempfile
 from types import SimpleNamespace
 import unittest
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 from websockets.datastructures import Headers
@@ -16,10 +18,66 @@ from speech_web_server import (
     LiveSessionCoordinator,
     handle_live_session,
     process_http_request,
+    session_start_title,
 )
+from session_store import SessionArchive, SessionTitleValidationError
 
 
 class LiveSessionCoordinatorTest(unittest.IsolatedAsyncioTestCase):
+    async def test_first_websocket_command_supplies_the_session_title(self) -> None:
+        self.assertEqual(
+            "Customer session",
+            session_start_title(
+                json.dumps(
+                    {"type": "start", "title": "Customer session"}
+                )
+            ),
+        )
+
+    async def test_audio_before_start_is_rejected(self) -> None:
+        with self.assertRaises(SessionTitleValidationError) as context:
+            session_start_title(b"audio")
+
+        self.assertEqual("SESSION_START_REQUIRED", context.exception.code)
+
+    async def test_duplicate_title_is_rejected_before_oci_client_creation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            archive = SessionArchive("Customer session", root)
+            archive.finalize("completed")
+            coordinator = LiveSessionCoordinator()
+            websocket = SimpleNamespace(
+                request=SimpleNamespace(path="/ws/live"),
+                recv=AsyncMock(
+                    return_value=json.dumps(
+                        {"type": "start", "title": "customer SESSION"}
+                    )
+                ),
+                send=AsyncMock(),
+                close=AsyncMock(),
+            )
+
+            with (
+                patch.dict(
+                    "os.environ",
+                    {"SESSION_STORAGE_DIR": str(root)},
+                ),
+                patch(
+                    "speech_web_server.LIVE_SESSION_COORDINATOR",
+                    coordinator,
+                ),
+                patch(
+                    "speech_web_server.SpeechTranslationSession"
+                ) as speech_session,
+            ):
+                await handle_live_session(websocket)
+
+            payload = json.loads(websocket.send.await_args.args[0])
+            self.assertEqual("session_rejected", payload["type"])
+            self.assertEqual("SESSION_TITLE_CONFLICT", payload["code"])
+            speech_session.assert_not_called()
+            self.assertEqual(1, len(list(root.iterdir())))
+
     async def test_only_one_owner_can_hold_the_live_session(self) -> None:
         coordinator = LiveSessionCoordinator()
         first_owner = asyncio.create_task(asyncio.sleep(60))

@@ -22,6 +22,18 @@ PCM_SAMPLE_BYTES = 2
 SESSION_ID_PATTERN = re.compile(r"^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}$")
 MAX_TITLE_LENGTH = 120
 MAX_DIAGNOSTICS = 100
+SESSION_TITLE_REQUIRED_MESSAGE = "Enter a session name."
+SESSION_TITLE_CONFLICT_MESSAGE = (
+    "A saved session already uses this name. Choose a different name."
+)
+
+
+class SessionTitleValidationError(ValueError):
+    """Reject an invalid archive title with a browser-safe error code."""
+
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
 
 
 def session_storage_root() -> Path:
@@ -40,6 +52,33 @@ def clean_title(value: Any) -> str:
         return "Live session"
     title = " ".join(value.split()).strip()
     return title[:MAX_TITLE_LENGTH] or "Live session"
+
+
+def validate_new_session_title(
+    value: Any,
+    root: Path | None = None,
+) -> str:
+    """Return a required title that is unique among saved sessions."""
+
+    if not isinstance(value, str) or not value.strip():
+        raise SessionTitleValidationError(
+            "SESSION_TITLE_REQUIRED",
+            SESSION_TITLE_REQUIRED_MESSAGE,
+        )
+
+    title = clean_title(value)
+    title_key = title.casefold()
+    for session in list_sessions(root):
+        existing_title = session.get("title")
+        if (
+            isinstance(existing_title, str)
+            and clean_title(existing_title).casefold() == title_key
+        ):
+            raise SessionTitleValidationError(
+                "SESSION_TITLE_CONFLICT",
+                SESSION_TITLE_CONFLICT_MESSAGE,
+            )
+    return title
 
 
 def utc_now() -> datetime:
@@ -112,8 +151,8 @@ class SessionArchive:
     def __init__(self, title: str = "Live session", root: Path | None = None):
         self.started_at = utc_now()
         self.session_id = create_session_id(self.started_at)
-        self.title = clean_title(title)
         self.root = (root or session_storage_root()).resolve()
+        self.title = validate_new_session_title(title, self.root)
         self.directory = self.root / self.session_id
         self.directory.mkdir(parents=True, exist_ok=False)
 
@@ -155,9 +194,6 @@ class SessionArchive:
             format="MP3",
             subtype="MPEG_LAYER_III",
         )
-
-    def set_title(self, title: Any) -> None:
-        self.title = clean_title(title)
 
     def write_audio(self, pcm_audio: bytes) -> None:
         if self._finalized:

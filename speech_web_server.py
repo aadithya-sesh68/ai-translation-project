@@ -25,6 +25,7 @@ from oci_speech_service import (
 )
 from session_store import (
     SessionArchive,
+    SessionTitleValidationError,
     delete_session,
     get_session,
     get_session_file,
@@ -311,7 +312,30 @@ async def send_events(
         except ConnectionClosed:
             return
         finally:
-            event_queue.task_done()
+                event_queue.task_done()
+
+
+def session_start_title(message: str | bytes) -> Any:
+    """Read the required title from the WebSocket's first command."""
+
+    if isinstance(message, bytes):
+        raise SessionTitleValidationError(
+            "SESSION_START_REQUIRED",
+            "Start the session before sending microphone audio.",
+        )
+    try:
+        command = json.loads(message)
+    except json.JSONDecodeError as error:
+        raise SessionTitleValidationError(
+            "SESSION_START_REQUIRED",
+            "The session start request was not valid.",
+        ) from error
+    if not isinstance(command, dict) or command.get("type") != "start":
+        raise SessionTitleValidationError(
+            "SESSION_START_REQUIRED",
+            "The first request must start the session.",
+        )
+    return command.get("title")
 
 
 async def handle_live_session(websocket: ServerConnection) -> None:
@@ -360,7 +384,7 @@ async def handle_live_session(websocket: ServerConnection) -> None:
         publish(event)
 
     try:
-        archive = SessionArchive()
+        archive = SessionArchive(session_start_title(await websocket.recv()))
         settings = OciSpeechSettings.from_environment()
         session = SpeechTranslationSession(
             settings,
@@ -418,9 +442,7 @@ async def handle_live_session(websocket: ServerConnection) -> None:
             except json.JSONDecodeError:
                 continue
 
-            if command.get("type") == "start":
-                archive.set_title(command.get("title"))
-            elif command.get("type") == "stop":
+            if command.get("type") == "stop":
                 stop_requested = True
                 publish_and_record(
                     {
@@ -431,6 +453,23 @@ async def handle_live_session(websocket: ServerConnection) -> None:
                 )
                 break
 
+    except SessionTitleValidationError as error:
+        log_event(
+            LOGGER,
+            logging.WARNING,
+            "live_session_rejected",
+            str(error),
+            stage="session",
+            code=error.code,
+        )
+        publish(
+            {
+                "type": "session_rejected",
+                "stage": "session",
+                "code": error.code,
+                "message": str(error),
+            }
+        )
     except ConnectionClosed as error:
         log_event(
             LOGGER,
