@@ -10,6 +10,7 @@ const microphoneLevel = document.querySelector("#microphone-level");
 const microphoneBars = [...microphoneLevel.querySelectorAll("span")];
 const transcriptList = document.querySelector("#transcript-list");
 const translationList = document.querySelector("#translation-list");
+const translationAlerts = document.querySelector("#translation-alerts");
 const currentFrenchCaption = document.querySelector("#current-french-caption");
 const emptyTranscript = document.querySelector("#empty-transcript");
 const emptyTranslation = document.querySelector("#empty-translation");
@@ -28,6 +29,17 @@ const downloadEnglish = document.querySelector("#download-english");
 const downloadFrench = document.querySelector("#download-french");
 const downloadReport = document.querySelector("#download-report");
 const deleteSessionButton = document.querySelector("#delete-session");
+const archiveMessage = document.querySelector("#archive-message");
+const deleteSessionDialog = document.querySelector("#delete-session-dialog");
+const deleteDialogSessionName = document.querySelector(
+  "#delete-dialog-session-name",
+);
+const cancelDeleteSessionButton = document.querySelector(
+  "#cancel-delete-session",
+);
+const confirmDeleteSessionButton = document.querySelector(
+  "#confirm-delete-session",
+);
 const savedEnglish = document.querySelector("#saved-english");
 const savedFrench = document.querySelector("#saved-french");
 const viewTabs = [...document.querySelectorAll('[role="tab"]')];
@@ -377,6 +389,7 @@ function saveResults() {
 function resetResults(clearStoredResults = true) {
   transcriptList.replaceChildren(emptyTranscript);
   translationList.replaceChildren(emptyTranslation);
+  translationAlerts.replaceChildren();
   emptyTranscript.hidden = false;
   emptyTranslation.hidden = false;
   englishSegments = [];
@@ -478,29 +491,52 @@ function appendTranslation(event) {
 }
 
 function appendError(event, persist = true) {
-  emptyTranslation.hidden = true;
-  const card = document.createElement("article");
-  card.className = "error-card";
+  const banner = document.createElement("article");
+  banner.className = "message-banner";
+  banner.dataset.severity = "danger";
+  const content = document.createElement("div");
+  content.className = "message-banner__content";
   const title = document.createElement("strong");
-  title.textContent = `${event.stage || "OCI"} error`;
+  title.className = "message-banner__title";
+  title.textContent =
+    event.stage === "translation"
+      ? "A French caption could not be translated."
+      : `${event.stage || "OCI"} error`;
+  const summary = document.createElement("p");
+  summary.className = "message-banner__summary";
+  summary.textContent =
+    event.stage === "translation"
+      ? "The session is continuing, but a short section may be missing."
+      : event.message;
+  content.append(title, summary);
+
+  const technicalDetails = document.createElement("details");
+  const technicalSummary = document.createElement("summary");
+  technicalSummary.textContent = "Technical details";
+  const technicalContent = document.createElement("div");
+  technicalContent.className = "message-banner__technical-details";
   const message = document.createElement("p");
   message.textContent = event.message;
-  card.append(title, message);
+  technicalContent.append(message);
 
   if (event.opc_request_id) {
     const requestId = document.createElement("code");
     requestId.textContent = `OPC request ID: ${event.opc_request_id}`;
-    card.append(requestId);
+    technicalContent.append(requestId);
   }
 
   if (event.status || event.code) {
-    title.textContent += ` (${[event.status, event.code]
+    const status = document.createElement("code");
+    status.textContent = `Status: ${[event.status, event.code]
       .filter(Boolean)
-      .join(" ")})`;
+      .join(" ")}`;
+    technicalContent.append(status);
   }
 
-  translationList.append(card);
-  translationList.scrollTop = translationList.scrollHeight;
+  technicalDetails.append(technicalSummary, technicalContent);
+  content.append(technicalDetails);
+  banner.append(content);
+  translationAlerts.append(banner);
 
   if (persist) {
     diagnosticEvents.push({
@@ -724,24 +760,49 @@ async function loadSessions(preferredSessionId = null) {
   }
 }
 
+function hideArchiveMessage() {
+  archiveMessage.replaceChildren();
+}
+
+function showArchiveMessage(titleText, messageText, severity = "danger") {
+  const banner = document.createElement("div");
+  banner.className = "message-banner";
+  banner.dataset.severity = severity;
+  const content = document.createElement("div");
+  content.className = "message-banner__content";
+  const title = document.createElement("strong");
+  title.className = "message-banner__title";
+  title.textContent = titleText;
+  const message = document.createElement("p");
+  message.className = "message-banner__summary";
+  message.textContent = messageText;
+  content.append(title, message);
+
+  banner.append(content);
+  archiveMessage.replaceChildren(banner);
+}
+
+function openDeleteSessionDialog() {
+  if (!selectedSessionId || deleteSessionDialog.open) {
+    return;
+  }
+
+  hideArchiveMessage();
+  deleteDialogSessionName.textContent =
+    savedSessionTitle.textContent || "This saved session";
+  deleteSessionDialog.showModal();
+  cancelDeleteSessionButton.focus();
+}
+
 async function deleteSelectedSession() {
   const sessionId = selectedSessionId;
   if (!sessionId) {
     return;
   }
 
-  const title = savedSessionTitle.textContent || "this saved session";
-  const confirmed = window.confirm(
-    `Permanently delete “${title}”?\n\nThe MP3, English text, French text, session report, metadata, and diagnostics cannot be recovered.`,
-  );
-  if (!confirmed) {
-    return;
-  }
-
   deleteSessionButton.disabled = true;
-  savedAudio.pause();
-  savedAudio.removeAttribute("src");
-  savedAudio.load();
+  cancelDeleteSessionButton.disabled = true;
+  confirmDeleteSessionButton.disabled = true;
 
   try {
     const response = await fetch(
@@ -753,12 +814,27 @@ async function deleteSelectedSession() {
       throw new Error(payload.message || "The saved session could not be deleted.");
     }
 
+    deleteSessionDialog.close();
+    savedAudio.pause();
+    savedAudio.removeAttribute("src");
+    savedAudio.load();
     selectedSessionId = null;
     await loadSessions();
+    showArchiveMessage(
+      "Session deleted",
+      "The saved recording, transcripts, report, metadata, and diagnostics were deleted.",
+      "success",
+    );
   } catch (error) {
-    window.alert(error?.message || "The saved session could not be deleted.");
+    deleteSessionDialog.close();
+    showArchiveMessage(
+      "Session not deleted",
+      error?.message || "The saved session could not be deleted.",
+    );
   } finally {
     deleteSessionButton.disabled = false;
+    cancelDeleteSessionButton.disabled = false;
+    confirmDeleteSessionButton.disabled = false;
   }
 }
 
@@ -1024,7 +1100,16 @@ async function stopSession() {
 startButton.addEventListener("click", startSession);
 stopButton.addEventListener("click", stopSession);
 refreshSessionsButton.addEventListener("click", () => loadSessions());
-deleteSessionButton.addEventListener("click", deleteSelectedSession);
+deleteSessionButton.addEventListener("click", openDeleteSessionDialog);
+cancelDeleteSessionButton.addEventListener("click", () => {
+  deleteSessionDialog.close();
+});
+confirmDeleteSessionButton.addEventListener("click", deleteSelectedSession);
+deleteSessionDialog.addEventListener("cancel", (event) => {
+  if (confirmDeleteSessionButton.disabled) {
+    event.preventDefault();
+  }
+});
 savedAudio.addEventListener("play", () => {
   if (liveSessionInProgress()) {
     pauseSavedAudioForCoordination();

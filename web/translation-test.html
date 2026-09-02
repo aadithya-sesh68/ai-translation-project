@@ -3,124 +3,232 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>OCI Language reliability test</title>
+    <title>OraTranslate diagnostics</title>
     <link rel="stylesheet" href="styles.css" />
     <link rel="stylesheet" href="translation-test.css" />
   </head>
   <body>
-    <main class="shell test-shell">
-      <header class="test-hero">
-        <div>
-          <p class="eyebrow">OCI Language diagnostics</p>
-          <h1>Translation reliability test</h1>
-          <p class="lede">
-            Send each English sentence as a separate English-to-French request
-            and retain the status, latency, and OPC request ID for every call.
-          </p>
+    <div class="page-shell">
+      <header class="overview-header">
+        <div class="frame-shell">
+          <div class="overview-header__surface">
+            <div class="overview-header__main">
+              <div class="overview-header__identity">
+                <div class="overview-header__title-row">
+                  <h1 class="overview-title">
+                    <span class="overview-title__strong">Translation</span>
+                    <span>diagnostics</span>
+                  </h1>
+                </div>
+                <p class="overview-subtitle">
+                  Controlled OCI Language request analysis
+                </p>
+              </div>
+
+              <div class="overview-actions">
+                <a class="btn btn--secondary" href="./">Return to live session</a>
+              </div>
+            </div>
+
+            <dl class="overview-context" aria-label="Diagnostic context">
+              <div class="context-item">
+                <dt>Translation</dt>
+                <dd>English to French</dd>
+              </div>
+              <div class="context-item">
+                <dt>Request unit</dt>
+                <dd>One sentence</dd>
+              </div>
+              <div class="context-item">
+                <dt>Retries</dt>
+                <dd>Disabled</dd>
+              </div>
+            </dl>
+          </div>
+
+          <div class="overview-strip" aria-hidden="true"></div>
         </div>
-        <a class="utility-link" href="./">Return to live translation</a>
       </header>
 
-      <section class="status-panel" aria-live="polite">
-        <span id="status-badge" data-state="idle">idle</span>
-        <p id="status-message">Ready for a controlled sequential test.</p>
-      </section>
+      <main class="overview-main">
+        <div class="frame-shell">
+          <div class="content-shell">
+            <div class="content-shell__primary test-content">
+              <section class="status-panel" aria-live="polite">
+                <div class="status-line">
+                  <span id="status-badge" data-state="idle">idle</span>
+                  <p id="status-message">Ready for a controlled sequential run.</p>
+                </div>
+              </section>
 
-      <section class="test-card" aria-labelledby="test-settings-heading">
-        <div class="test-card-heading">
-          <div>
-            <span class="step">01</span>
-            <h2 id="test-settings-heading">Test settings</h2>
-          </div>
-          <p>Each sentence is one request. Failed calls are not retried.</p>
-        </div>
+              <section
+                class="overview-section test-card"
+                aria-labelledby="test-settings-heading"
+              >
+                <div class="section-heading test-card-heading">
+                  <h2 id="test-settings-heading">Configure requests</h2>
+                  <p>Each sentence is sent independently. Failed calls are not retried.</p>
+                </div>
 
-        <div class="settings-grid">
-          <label class="sentence-input">
-            <span>English sentences — one per line</span>
-            <textarea id="sentences" rows="13"></textarea>
-          </label>
+                <div class="settings-grid">
+                  <label class="sentence-input">
+                    <span>English sentences — one per line</span>
+                    <textarea id="sentences" rows="13"></textarea>
+                  </label>
 
-          <div class="rate-settings">
-            <label>
-              <span>Concurrent requests</span>
-              <select id="concurrency">
-                <option value="1" selected>1 — sequential baseline</option>
-                <option value="2">2 — low concurrency</option>
-                <option value="3">3 — moderate concurrency</option>
-                <option value="5">5 — controlled burst</option>
-              </select>
-            </label>
-            <label>
-              <span>Pause per worker</span>
-              <select id="delay-ms">
-                <option value="1000">1,000 ms</option>
-                <option value="500">500 ms</option>
-                <option value="250" selected>250 ms</option>
-                <option value="100">100 ms</option>
-                <option value="0">No pause</option>
-              </select>
-            </label>
-            <div class="test-note">
-              <strong>How to read failures</strong>
-              <p>
-                HTTP 429 indicates throttling. HTTP 404
-                NotAuthorizedOrNotFound points to authorization, region, or
-                compartment handling rather than rate limiting.
-              </p>
+                  <div class="rate-settings">
+                    <label>
+                      <span>Concurrent requests</span>
+                      <select id="concurrency">
+                        <option value="1" selected>1 — sequential baseline</option>
+                        <option value="2">2 — low concurrency</option>
+                        <option value="3">3 — moderate concurrency</option>
+                        <option value="5">5 — controlled burst</option>
+                      </select>
+                    </label>
+                    <label>
+                      <span>Pause per worker</span>
+                      <select id="delay-ms">
+                        <option value="1000">1,000 ms</option>
+                        <option value="500">500 ms</option>
+                        <option value="250" selected>250 ms</option>
+                        <option value="100">100 ms</option>
+                        <option value="0">No pause</option>
+                      </select>
+                    </label>
+                    <div class="test-note">
+                      <strong>Reading failures</strong>
+                      <p>
+                        HTTP 429 indicates throttling. HTTP 404
+                        NotAuthorizedOrNotFound points to authorization, region,
+                        or compartment handling.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="test-actions">
+                  <button
+                    id="start-test"
+                    class="btn btn--primary primary"
+                    type="button"
+                  >
+                    Run diagnostics
+                  </button>
+                  <button
+                    id="stop-test"
+                    class="btn btn--secondary"
+                    type="button"
+                    disabled
+                  >
+                    Stop
+                  </button>
+                  <button
+                    id="download-results"
+                    class="btn btn--secondary"
+                    type="button"
+                    disabled
+                  >
+                    Download JSON results
+                  </button>
+                </div>
+              </section>
+
+              <section class="summary-grid" aria-label="Diagnostic summary">
+                <article><span>Total</span><strong id="total-count">30</strong></article>
+                <article><span>Successful</span><strong id="success-count">0</strong></article>
+                <article><span>HTTP 404</span><strong id="error-404-count">0</strong></article>
+                <article><span>HTTP 429</span><strong id="error-429-count">0</strong></article>
+                <article><span>Other errors</span><strong id="other-error-count">0</strong></article>
+              </section>
+
+              <section
+                class="overview-section test-card results-card"
+                aria-labelledby="results-heading"
+              >
+                <div class="section-heading test-card-heading">
+                  <h2 id="results-heading">Request results</h2>
+                  <p id="run-metadata">No diagnostic run has started.</p>
+                </div>
+                <div class="table-scroll">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th scope="col">#</th>
+                        <th scope="col">English</th>
+                        <th scope="col">French or diagnostic</th>
+                        <th scope="col">Result</th>
+                        <th scope="col">Latency</th>
+                        <th scope="col">OPC request ID</th>
+                      </tr>
+                    </thead>
+                    <tbody id="results-body"></tbody>
+                  </table>
+                </div>
+              </section>
+
+              <footer class="app-footer">
+                <p>
+                  Results contain sentence text and OCI diagnostics, but no OCI
+                  credentials or audio.
+                </p>
+              </footer>
             </div>
           </div>
         </div>
+      </main>
+    </div>
 
-        <div class="test-actions">
-          <button id="start-test" class="primary" type="button">
-            Run translation test
-          </button>
-          <button id="stop-test" type="button" disabled>Stop test</button>
-          <button id="download-results" type="button" disabled>
-            Download JSON results
-          </button>
+    <nav class="app-nav" aria-label="OraTranslate navigation">
+      <div class="chrome-shell app-nav__shell">
+        <div class="app-nav__tabs">
+          <a class="app-nav__item" href="./" aria-label="Live session">
+            <span class="app-nav__indicator" aria-hidden="true"></span>
+            <span class="app-nav__icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24">
+                <path
+                  d="M12 14.75A3.75 3.75 0 0 0 15.75 11V6.5a3.75 3.75 0 0 0-7.5 0V11A3.75 3.75 0 0 0 12 14.75Zm-6.25-4a6.25 6.25 0 0 0 12.5 0M12 17v3.25m-3 0h6"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="1.75"
+                />
+              </svg>
+            </span>
+            <span class="app-nav__label">Live session</span>
+          </a>
+          <a
+            class="app-nav__item"
+            href="translation-test.html"
+            aria-current="page"
+            aria-label="Translation diagnostics"
+          >
+            <span class="app-nav__indicator" aria-hidden="true"></span>
+            <span class="app-nav__icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24">
+                <path
+                  d="M5 5.25h14v13.5H5V5.25Zm3 3h8M8 12h5M8 15.75h3"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="1.75"
+                />
+              </svg>
+            </span>
+            <span class="app-nav__label">Diagnostics</span>
+          </a>
         </div>
-      </section>
 
-      <section class="summary-grid" aria-label="Test summary">
-        <article><span>Total</span><strong id="total-count">30</strong></article>
-        <article><span>Successful</span><strong id="success-count">0</strong></article>
-        <article><span>HTTP 404</span><strong id="error-404-count">0</strong></article>
-        <article><span>HTTP 429</span><strong id="error-429-count">0</strong></article>
-        <article><span>Other errors</span><strong id="other-error-count">0</strong></article>
-      </section>
-
-      <section class="test-card results-card" aria-labelledby="results-heading">
-        <div class="test-card-heading">
-          <div>
-            <span class="step">02</span>
-            <h2 id="results-heading">Request-by-request results</h2>
-          </div>
-          <p id="run-metadata">No test has run yet.</p>
+        <div class="brand-pill" aria-label="Oracle">
+          <span class="brand-pill__mark" aria-hidden="true">
+            <img src="assets/images/oracle-o.svg" alt="" />
+          </span>
         </div>
-        <div class="table-scroll">
-          <table>
-            <thead>
-              <tr>
-                <th scope="col">#</th>
-                <th scope="col">English</th>
-                <th scope="col">French or diagnostic</th>
-                <th scope="col">Result</th>
-                <th scope="col">Latency</th>
-                <th scope="col">OPC request ID</th>
-              </tr>
-            </thead>
-            <tbody id="results-body"></tbody>
-          </table>
-        </div>
-      </section>
+      </div>
+    </nav>
 
-      <footer>
-        Test results contain sentence text and OCI diagnostics, but no OCI
-        credentials or audio.
-      </footer>
-    </main>
     <script src="url-utils.js" defer></script>
     <script src="translation-test.js" defer></script>
   </body>

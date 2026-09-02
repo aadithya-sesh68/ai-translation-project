@@ -1,0 +1,182 @@
+:root {
+  /* Mapped from tokens/typography.json */
+  --rds-font-family-primary: "Oracle Sans", "Segoe UI", Arial, sans-serif;
+  --rds-font-family-display: "Georgia", "Times New Roman", serif;
+}
+
+/* Oracle Sans (core + supported variants) */
+@font-face {
+  font-family: "Oracle Sans";
+  src:
+    local("Oracle Sans Ultra Light"),
+    local("Oracle Sans"),
+    url("./fonts/OracleSans_ULt.ttf") format("truetype");
+  font-weight: 200;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Oracle Sans";
+  src:
+    local("Oracle Sans Ultra Light Italic"),
+    local("Oracle Sans Italic"),
+    url("./fonts/OracleSans_ULtIt.ttf") format("truetype");
+  font-weight: 200;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Oracle Sans";
+  src:
+    local("Oracle Sans Light"),
+    local("Oracle Sans"),
+    url("./fonts/OracleSans_Lt.ttf") format("truetype");
+  font-weight: 300;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Oracle Sans";
+  src:
+    local("Oracle Sans Light Italic"),
+    local("Oracle Sans Italic"),
+    url("./fonts/OracleSans_LtIt.ttf") format("truetype");
+  font-weight: 300;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Oracle Sans";
+  src:
+    local("Oracle Sans Regular"),
+    local("Oracle Sans"),
+    url("./fonts/OracleSans_Rg.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Oracle Sans";
+  src:
+    local("Oracle Sans Italic"),
+    local("Oracle Sans"),
+    url("./fonts/OracleSans_It.ttf") format("truetype");
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Oracle Sans";
+  src:
+    local("Oracle Sans SemiBold"),
+    local("Oracle Sans"),
+    url("./fonts/OracleSans_SBd.ttf") format("truetype");
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Oracle Sans";
+  src:
+    local("Oracle Sans SemiBold Italic"),
+    local("Oracle Sans Italic"),
+    url("./fonts/OracleSans_SBdIt.ttf") format("truetype");
+  font-weight: 600;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Oracle Sans";
+  src:
+    local("Oracle Sans Bold"),
+    local("Oracle Sans"),
+    url("./fonts/OracleSans_Bd.ttf") format("truetype");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Oracle Sans";
+  src:
+    local("Oracle Sans Bold Italic"),
+    local("Oracle Sans Italic"),
+    url("./fonts/OracleSans_BdIt.ttf") format("truetype");
+  font-weight: 700;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Oracle Sans";
+  src:
+    local("Oracle Sans ExtraBold"),
+    local("Oracle Sans"),
+    url("./fonts/OracleSans_XBd.ttf") format("truetype");
+  font-weight: 800;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Oracle Sans";
+  src:
+    local("Oracle Sans ExtraBold Italic"),
+    local("Oracle Sans Italic"),
+    url("./fonts/OracleSans_XBdIt.ttf") format("truetype");
+  font-weight: 800;
+  font-style: italic;
+  font-display: swap;
+}
+
+/* Georgia display family */
+@font-face {
+  font-family: "Georgia";
+  src:
+    local("Georgia"),
+    url("./fonts/Georgia.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Georgia";
+  src:
+    local("Georgia Italic"),
+    local("Georgia"),
+    url("./fonts/Georgia Italic.ttf") format("truetype");
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Georgia";
+  src:
+    local("Georgia Bold"),
+    local("Georgia"),
+    url("./fonts/Georgia Bold.ttf") format("truetype");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Georgia";
+  src:
+    local("Georgia Bold Italic"),
+    local("Georgia"),
+    url("./fonts/Georgia Bold Italic.ttf") format("truetype");
+  font-weight: 700;
+  font-style: italic;
+  font-display: swap;
+}

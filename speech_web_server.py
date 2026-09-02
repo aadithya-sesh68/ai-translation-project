@@ -48,6 +48,25 @@ STATIC_FILES = {
 }
 
 
+def static_file_for_path(path: str) -> Path | None:
+    """Resolve a page asset without allowing traversal outside web/assets/."""
+
+    known_file = STATIC_FILES.get(path)
+    if known_file is not None:
+        return known_file
+    if not path.startswith("/assets/"):
+        return None
+
+    assets_root = (WEB_ROOT / "assets").resolve()
+    relative_path = unquote(path).removeprefix("/assets/")
+    candidate = (assets_root / relative_path).resolve()
+    try:
+        candidate.relative_to(assets_root)
+    except ValueError:
+        return None
+    return candidate
+
+
 class LiveSessionCoordinator:
     """Allow one authoritative live audio-capture session per server process."""
 
@@ -256,7 +275,7 @@ def process_http_request(
     if path == "/favicon.ico":
         return response(HTTPStatus.NO_CONTENT, b"", "image/x-icon")
 
-    file_path = STATIC_FILES.get(path)
+    file_path = static_file_for_path(path)
     if not file_path or not file_path.is_file():
         return response(
             HTTPStatus.NOT_FOUND,
@@ -265,10 +284,17 @@ def process_http_request(
         )
 
     content_type = mimetypes.guess_type(file_path.name)[0]
+    content_type = content_type or "application/octet-stream"
+    if content_type.startswith("text/") or content_type in {
+        "application/javascript",
+        "application/json",
+        "image/svg+xml",
+    }:
+        content_type = f"{content_type}; charset=utf-8"
     return response(
         HTTPStatus.OK,
         file_path.read_bytes(),
-        f"{content_type or 'application/octet-stream'}; charset=utf-8",
+        content_type,
     )
 
 

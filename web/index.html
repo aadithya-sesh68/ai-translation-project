@@ -7,270 +7,439 @@
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <main class="shell">
-      <header class="hero app-header">
-        <div class="brand-block">
-          <p class="eyebrow">Live interpretation · English to French</p>
-          <h1>OraTranslate Live</h1>
-          <p class="lede">
-            Clear French captions for every live session.
-          </p>
-        </div>
-      </header>
-
-      <nav class="app-tabs" role="tablist" aria-label="OraTranslate views">
-        <button
-          id="live-session-tab"
-          class="app-tab"
-          type="button"
-          role="tab"
-          aria-selected="true"
-          aria-controls="live-session-panel"
-          data-panel="live-session-panel"
-        >
-          Live Session
-        </button>
-        <button
-          id="session-archives-tab"
-          class="app-tab"
-          type="button"
-          role="tab"
-          aria-selected="false"
-          aria-controls="session-archives-panel"
-          data-panel="session-archives-panel"
-          tabindex="-1"
-        >
-          Session Archives
-        </button>
-      </nav>
-
-      <section
-        id="live-session-panel"
-        class="tab-panel"
-        role="tabpanel"
-        aria-labelledby="live-session-tab"
-        tabindex="0"
-      >
-        <div class="session-command-center">
-          <section class="session-controls" aria-label="Session controls">
-            <label for="session-title">Session name</label>
-            <input
-              id="session-title"
-              type="text"
-              maxlength="120"
-              placeholder="For example, OCI customer session"
-            />
-            <div class="controls">
-              <button id="start-button" class="primary" type="button">
-                Start session
-              </button>
-              <button id="stop-button" type="button" disabled>
-                End session
-              </button>
-            </div>
-          </section>
-
-          <div class="session-feedback">
-            <section class="status-panel" aria-live="polite">
-              <div class="status-line">
-                <span id="status-badge" data-state="idle">idle</span>
-                <p id="status-message">Ready to start a local live session.</p>
-              </div>
-            </section>
-
-            <section
-              id="microphone-monitor"
-              class="microphone-monitor"
-              data-state="idle"
-              aria-labelledby="microphone-label"
-            >
-              <span class="microphone-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" focusable="false">
-                  <path
-                    d="M12 15.25a3.75 3.75 0 0 0 3.75-3.75v-5a3.75 3.75 0 0 0-7.5 0v5A3.75 3.75 0 0 0 12 15.25Zm-6.25-4a6.25 6.25 0 0 0 12.5 0M12 17.5v3.25m-3 0h6"
-                  />
-                </svg>
-              </span>
-              <div class="microphone-copy">
-                <strong id="microphone-label">Microphone ready</strong>
-                <span id="microphone-message">
-                  Start a session to check the audio input.
-                </span>
-              </div>
-              <div
-                id="microphone-level"
-                class="microphone-level"
-                role="meter"
-                aria-label="Microphone input level"
-                aria-valuemin="0"
-                aria-valuemax="100"
-                aria-valuenow="0"
-              >
-                <span></span><span></span><span></span><span></span>
-                <span></span><span></span><span></span><span></span>
-                <span></span><span></span><span></span><span></span>
-              </div>
-            </section>
-          </div>
-        </div>
-
-        <section class="caption-stage" aria-labelledby="french-caption-heading">
-        <div class="caption-stage-heading">
-          <div>
-            <span class="live-marker">Live</span>
-            <h2 id="french-caption-heading">French captions</h2>
-          </div>
-          <span class="caption-language" lang="fr">Français</span>
-        </div>
-        <p
-          id="current-french-caption"
-          class="current-french-caption waiting-caption"
-          lang="fr"
-          aria-live="polite"
-          aria-atomic="true"
-        >
-          La traduction française apparaîtra ici.
-        </p>
-      </section>
-
-      <section class="history-panel" aria-labelledby="french-history-heading">
-        <div class="history-heading">
-          <div>
-            <p class="eyebrow">Session so far</p>
-            <h2 id="french-history-heading">French transcript</h2>
-          </div>
-          <span class="buffer-note">Updated throughout the session</span>
-        </div>
-        <div
-          id="translation-list"
-          class="result-list french-history"
-          aria-live="polite"
-        >
-          <p id="empty-translation" class="empty-state">
-            The complete French transcript will build here as the speaker talks.
-          </p>
-        </div>
-      </section>
-
-        <details class="source-panel">
-        <summary>
-          <span>
-            <strong>English source</strong>
-            <small>Available for reference</small>
-          </span>
-          <span class="disclosure-label">
-            <span class="when-closed">Show transcript</span>
-            <span class="when-open">Hide transcript</span>
-          </span>
-        </summary>
-        <div
-          id="transcript-list"
-          class="result-list source-transcript"
-          aria-live="polite"
-        >
-          <p id="empty-transcript" class="empty-state">
-            The English source transcript will appear here.
-          </p>
-        </div>
-        </details>
-      </section>
-
-      <section
-        id="session-archives-panel"
-        class="tab-panel"
-        role="tabpanel"
-        aria-labelledby="session-archives-tab"
-        tabindex="0"
-        hidden
-      >
-        <section
-          class="session-library"
-          id="session-library"
-          aria-labelledby="library-heading"
-        >
-          <div class="library-heading">
-            <div>
-              <p class="eyebrow">Session Archives</p>
-              <h2 id="library-heading">Saved sessions</h2>
-              <p>
-                Play a completed session or review and download its recording,
-                transcript, translation, and operational report.
-              </p>
-            </div>
-            <button id="refresh-sessions" type="button">Refresh sessions</button>
-          </div>
-
-          <div class="library-grid">
-          <div id="session-list" class="session-list">
-            <p id="empty-sessions" class="empty-state">
-              Completed sessions will appear here.
-            </p>
-          </div>
-
-          <article id="session-viewer" class="session-viewer">
-            <p id="empty-viewer" class="empty-state">
-              Choose a session to see its saved outputs.
-            </p>
-            <div id="session-detail" hidden>
-              <div class="viewer-heading">
-                <div>
-                  <span id="saved-session-status" class="saved-status"></span>
-                  <h3 id="saved-session-title"></h3>
-                  <p id="saved-session-meta"></p>
+    <div class="page-shell">
+      <header class="overview-header">
+        <div class="frame-shell">
+          <div class="overview-header__surface">
+            <div class="overview-header__main">
+              <div class="overview-header__identity">
+                <div class="overview-header__title-row">
+                  <h1 class="overview-title">
+                    <span class="overview-title__strong">OraTranslate</span>
+                    <span>Live</span>
+                  </h1>
                 </div>
-              </div>
-
-              <div id="saved-audio-panel" class="saved-audio">
-                <audio id="saved-audio" controls preload="metadata"></audio>
-                <p class="archive-playback-note">
-                  Only one archived recording plays at a time. Playback pauses
-                  automatically when a live session starts.
+                <p class="overview-subtitle">
+                  Live English-to-French interpretation
                 </p>
               </div>
 
-              <div class="download-links">
-                <a id="download-audio" download>Download MP3</a>
-                <a id="download-english" download>Download English text</a>
-                <a id="download-french" download>Download French text</a>
-                <a id="download-report" download>Download session report</a>
-                <button id="delete-session" class="danger-action" type="button">
-                  Delete saved session
-                </button>
-              </div>
-
-              <section class="saved-text" aria-labelledby="saved-english-heading">
-                <h4 id="saved-english-heading">English transcript</h4>
-                <p id="saved-english"></p>
-              </section>
-              <section
-                class="saved-text french-saved"
-                aria-labelledby="saved-french-heading"
-              >
-                <h4 id="saved-french-heading">French translation</h4>
-                <p id="saved-french" lang="fr"></p>
-              </section>
             </div>
-          </article>
-          </div>
-        </section>
-      </section>
 
-      <footer>
-        <p>
-          OCI credentials stay on the server and are never sent to the browser.
-          Session audio and text are stored by the server. Use headphones to
-          reduce echo.
-        </p>
-        <a
-          class="utility-link"
-          href="translation-test.html"
-          target="_blank"
-          rel="noopener"
-        >
-          Open translation reliability test
-        </a>
-      </footer>
-    </main>
+            <dl class="overview-context" aria-label="Translation context">
+              <div class="context-item">
+                <dt>Source</dt>
+                <dd>English speech</dd>
+              </div>
+              <div class="context-item">
+                <dt>Output</dt>
+                <dd>French captions</dd>
+              </div>
+              <div class="context-item">
+                <dt>Service</dt>
+                <dd>OCI Speech and Language</dd>
+              </div>
+            </dl>
+          </div>
+
+          <div class="overview-strip" aria-hidden="true"></div>
+        </div>
+      </header>
+
+      <main class="overview-main">
+        <div class="frame-shell">
+          <div class="content-shell">
+            <div class="content-shell__primary">
+              <section
+                id="live-session-panel"
+                class="tab-panel"
+                role="tabpanel"
+                aria-labelledby="live-session-tab"
+                tabindex="0"
+              >
+                <section
+                  class="overview-section live-workflow"
+                  aria-labelledby="live-workflow-heading"
+                >
+                  <div class="section-heading">
+                    <h2 id="live-workflow-heading">Start a live session</h2>
+                    <p>Speak naturally and follow the French captions as they arrive.</p>
+                  </div>
+
+                  <div class="live-item-overview">
+                    <aside
+                      class="session-command-center"
+                      aria-labelledby="session-details-heading"
+                    >
+                      <div class="session-card-heading">
+                        <h3 id="session-details-heading">Session details</h3>
+                      </div>
+
+                      <section class="session-controls" aria-label="Session controls">
+                        <label for="session-title">Session name</label>
+                        <input
+                          id="session-title"
+                          type="text"
+                          maxlength="120"
+                          placeholder="OCI customer session"
+                        />
+                        <div class="controls">
+                          <button
+                            id="start-button"
+                            class="btn btn--primary primary"
+                            type="button"
+                          >
+                            Start session
+                          </button>
+                          <button
+                            id="stop-button"
+                            class="btn btn--secondary"
+                            type="button"
+                            disabled
+                          >
+                            End session
+                          </button>
+                        </div>
+                      </section>
+
+                      <div class="session-feedback">
+                        <section class="status-panel" aria-live="polite">
+                          <div class="status-line">
+                            <span id="status-badge" data-state="idle">idle</span>
+                            <p id="status-message">Ready to start a live session.</p>
+                          </div>
+                        </section>
+
+                        <section
+                          id="microphone-monitor"
+                          class="microphone-monitor"
+                          data-state="idle"
+                          aria-labelledby="microphone-label"
+                        >
+                          <span class="microphone-icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24" focusable="false">
+                              <path
+                                d="M12 15.25a3.75 3.75 0 0 0 3.75-3.75v-5a3.75 3.75 0 0 0-7.5 0v5A3.75 3.75 0 0 0 12 15.25Zm-6.25-4a6.25 6.25 0 0 0 12.5 0M12 17.5v3.25m-3 0h6"
+                              />
+                            </svg>
+                          </span>
+                          <div class="microphone-copy">
+                            <strong id="microphone-label">Microphone ready</strong>
+                            <span id="microphone-message">
+                              Start a session to check the audio input.
+                            </span>
+                          </div>
+                          <div
+                            id="microphone-level"
+                            class="microphone-level"
+                            role="meter"
+                            aria-label="Microphone input level"
+                            aria-valuemin="0"
+                            aria-valuemax="100"
+                            aria-valuenow="0"
+                          >
+                            <span></span><span></span><span></span><span></span>
+                            <span></span><span></span><span></span><span></span>
+                            <span></span><span></span><span></span><span></span>
+                          </div>
+                        </section>
+                      </div>
+                    </aside>
+
+                    <div class="live-item-overview__content">
+                      <section
+                        class="caption-stage"
+                        aria-labelledby="french-caption-heading"
+                      >
+                        <div class="caption-stage-heading">
+                          <div>
+                            <span class="live-marker">Live</span>
+                            <h2 id="french-caption-heading">French captions</h2>
+                          </div>
+                          <span class="caption-language" lang="fr">Français</span>
+                        </div>
+                        <p
+                          id="current-french-caption"
+                          class="current-french-caption waiting-caption"
+                          lang="fr"
+                          aria-live="polite"
+                          aria-atomic="true"
+                        >
+                          La traduction française apparaîtra ici.
+                        </p>
+                      </section>
+
+                      <section
+                        id="translation-alerts"
+                        class="message-stack"
+                        aria-label="Translation notices"
+                        aria-live="polite"
+                      ></section>
+
+                      <section
+                        class="history-panel"
+                        aria-labelledby="french-history-heading"
+                      >
+                        <div class="history-heading">
+                          <div>
+                            <p class="section-kicker">Session so far</p>
+                            <h2 id="french-history-heading">French transcript</h2>
+                          </div>
+                          <span class="buffer-note">Updated throughout the session</span>
+                        </div>
+                        <div
+                          id="translation-list"
+                          class="result-list french-history"
+                        >
+                          <p id="empty-translation" class="empty-state">
+                            The complete French transcript will build here as the speaker talks.
+                          </p>
+                        </div>
+                      </section>
+
+                      <details class="source-panel">
+                        <summary>
+                          <span>
+                            <strong>English source</strong>
+                            <small>Available for reference</small>
+                          </span>
+                          <span class="disclosure-label">
+                            <span class="when-closed">Show transcript</span>
+                            <span class="when-open">Hide transcript</span>
+                          </span>
+                        </summary>
+                        <div
+                          id="transcript-list"
+                          class="result-list source-transcript"
+                          aria-live="polite"
+                        >
+                          <p id="empty-transcript" class="empty-state">
+                            The English source transcript will appear here.
+                          </p>
+                        </div>
+                      </details>
+                    </div>
+                  </div>
+                </section>
+              </section>
+
+              <section
+                id="session-archives-panel"
+                class="tab-panel"
+                role="tabpanel"
+                aria-labelledby="session-archives-tab"
+                tabindex="0"
+                hidden
+              >
+                <section
+                  class="session-library overview-section"
+                  id="session-library"
+                  aria-labelledby="library-heading"
+                >
+                  <div class="library-heading section-heading">
+                    <div>
+                      <h2 id="library-heading">Saved sessions</h2>
+                      <p>
+                        Review recordings, transcripts, translations, and operational reports.
+                      </p>
+                    </div>
+                    <button
+                      id="refresh-sessions"
+                      class="btn btn--secondary"
+                      type="button"
+                    >
+                      Refresh sessions
+                    </button>
+                  </div>
+
+                  <div
+                    id="archive-message"
+                    class="archive-message"
+                    aria-live="polite"
+                  ></div>
+
+                  <div class="library-grid">
+                    <div id="session-list" class="session-list">
+                      <p id="empty-sessions" class="empty-state">
+                        Completed sessions will appear here.
+                      </p>
+                    </div>
+
+                    <article id="session-viewer" class="session-viewer">
+                      <p id="empty-viewer" class="empty-state">
+                        Choose a session to see its saved outputs.
+                      </p>
+                      <div id="session-detail" hidden>
+                        <div class="viewer-heading">
+                          <div>
+                            <span
+                              id="saved-session-status"
+                              class="saved-status"
+                            ></span>
+                            <h3 id="saved-session-title"></h3>
+                            <p id="saved-session-meta"></p>
+                          </div>
+                        </div>
+
+                        <div id="saved-audio-panel" class="saved-audio">
+                          <audio
+                            id="saved-audio"
+                            controls
+                            preload="metadata"
+                          ></audio>
+                          <p class="archive-playback-note">
+                            Only one archived recording plays at a time. Playback pauses
+                            automatically when a live session starts.
+                          </p>
+                        </div>
+
+                        <div class="download-links">
+                          <a id="download-audio" download>Download MP3</a>
+                          <a id="download-english" download>Download English text</a>
+                          <a id="download-french" download>Download French text</a>
+                          <a id="download-report" download>Download session report</a>
+                          <button
+                            id="delete-session"
+                            class="btn btn--danger danger-action"
+                            type="button"
+                          >
+                            Delete saved session
+                          </button>
+                        </div>
+
+                        <section
+                          class="saved-text"
+                          aria-labelledby="saved-english-heading"
+                        >
+                          <h4 id="saved-english-heading">English transcript</h4>
+                          <p id="saved-english"></p>
+                        </section>
+                        <section
+                          class="saved-text french-saved"
+                          aria-labelledby="saved-french-heading"
+                        >
+                          <h4 id="saved-french-heading">French translation</h4>
+                          <p id="saved-french" lang="fr"></p>
+                        </section>
+                      </div>
+                    </article>
+                  </div>
+                </section>
+              </section>
+
+              <footer class="app-footer">
+                <p>
+                  OCI credentials stay on the server. Session audio and text are stored
+                  in the server archive.
+                </p>
+                <p>Use headphones during live sessions to reduce echo.</p>
+              </footer>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+
+    <dialog
+      id="delete-session-dialog"
+      class="rdw-dialog"
+      aria-labelledby="delete-dialog-title"
+      aria-describedby="delete-dialog-description"
+    >
+      <div class="rdw-dialog__surface">
+        <header class="rdw-dialog__header">
+          <h2 id="delete-dialog-title">Delete saved session?</h2>
+        </header>
+        <div class="rdw-dialog__body">
+          <p id="delete-dialog-description">
+            <strong id="delete-dialog-session-name"></strong> and its MP3,
+            transcripts, report, metadata, and diagnostics will be permanently
+            deleted.
+          </p>
+        </div>
+        <footer class="rdw-dialog__footer">
+          <button
+            id="cancel-delete-session"
+            class="btn btn--secondary"
+            type="button"
+          >
+            Cancel
+          </button>
+          <button
+            id="confirm-delete-session"
+            class="btn btn--danger-solid"
+            type="button"
+          >
+            Delete session
+          </button>
+        </footer>
+      </div>
+    </dialog>
+
+    <nav class="app-nav" aria-label="OraTranslate views">
+      <div class="chrome-shell app-nav__shell">
+        <div class="app-nav__tabs" role="tablist" aria-label="OraTranslate views">
+          <button
+            id="live-session-tab"
+            class="app-nav__item"
+            type="button"
+            role="tab"
+            aria-selected="true"
+            aria-controls="live-session-panel"
+            aria-label="Live session"
+            data-panel="live-session-panel"
+          >
+            <span class="app-nav__indicator" aria-hidden="true"></span>
+            <span class="app-nav__icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24">
+                <path
+                  d="M12 14.75A3.75 3.75 0 0 0 15.75 11V6.5a3.75 3.75 0 0 0-7.5 0V11A3.75 3.75 0 0 0 12 14.75Zm-6.25-4a6.25 6.25 0 0 0 12.5 0M12 17v3.25m-3 0h6"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="1.75"
+                />
+              </svg>
+            </span>
+            <span class="app-nav__label">Live session</span>
+          </button>
+          <button
+            id="session-archives-tab"
+            class="app-nav__item"
+            type="button"
+            role="tab"
+            aria-selected="false"
+            aria-controls="session-archives-panel"
+            aria-label="Session archives"
+            data-panel="session-archives-panel"
+            tabindex="-1"
+          >
+            <span class="app-nav__indicator" aria-hidden="true"></span>
+            <span class="app-nav__icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24">
+                <path
+                  d="M5 7.25h14v12H5v-12Zm-1-3h16v3H4v-3Zm4.25 7.25h7.5"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="1.75"
+                />
+              </svg>
+            </span>
+            <span class="app-nav__label">Session archives</span>
+          </button>
+        </div>
+
+        <div class="brand-pill" aria-label="Oracle">
+          <span class="brand-pill__mark" aria-hidden="true">
+            <img src="assets/images/oracle-o.svg" alt="" />
+          </span>
+        </div>
+      </div>
+    </nav>
+
     <script src="url-utils.js" defer></script>
     <script src="app.js" defer></script>
   </body>

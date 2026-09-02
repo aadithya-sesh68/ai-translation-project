@@ -6,10 +6,20 @@ from pathlib import Path
 import unittest
 from unittest.mock import patch
 
-from speech_web_server import allowed_websocket_origins
+from speech_web_server import allowed_websocket_origins, static_file_for_path
 
 
 class ProxyConfigurationTest(unittest.TestCase):
+    def test_redwood_assets_are_resolved_inside_the_web_root(self) -> None:
+        asset = static_file_for_path("/assets/images/oracle-o.svg")
+
+        self.assertIsNotNone(asset)
+        self.assertTrue(asset.is_file())
+        self.assertEqual("oracle-o.svg", asset.name)
+
+    def test_redwood_asset_path_cannot_traverse_outside_assets(self) -> None:
+        self.assertIsNone(static_file_for_path("/assets/../../README.md"))
+
     def test_local_and_public_origins_are_allowed(self) -> None:
         with patch.dict(
             "os.environ",
