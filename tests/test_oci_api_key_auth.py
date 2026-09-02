@@ -312,5 +312,31 @@ class OciApiKeyAuthenticationTest(unittest.TestCase):
         self.assertEqual(1, result["request_number"])
         self.assertIn("latency_ms", result)
 
+    def test_translation_backlog_is_bounded_and_coalesced_in_order(self) -> None:
+        async def exercise_queue() -> None:
+            events: list[dict[str, object]] = []
+            listener = SpeechTranslationListener(
+                translation_service=Mock(spec=TranslationService),
+                event_sink=events.append,
+                event_loop=asyncio.get_running_loop(),
+                translation_buffer_seconds=1.5,
+                translation_queue_max_items=2,
+            )
+            listener.translation_queue.put_nowait("First.")
+            listener.translation_queue.put_nowait("Second.")
+            listener.pending_segments.append("Third.")
+
+            listener.queue_pending_transcript()
+
+            self.assertEqual(1, listener.translation_queue.qsize())
+            self.assertEqual(
+                "First. Second. Third.",
+                listener.translation_queue.get_nowait(),
+            )
+            self.assertEqual("queue_status", events[-1]["type"])
+            self.assertEqual("coalesced", events[-1]["state"])
+
+        asyncio.run(exercise_queue())
+
 if __name__ == "__main__":
     unittest.main()

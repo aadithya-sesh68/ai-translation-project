@@ -1,165 +1,303 @@
-"""Tests for the single authoritative live audio-capture session."""
+"""Tests for the server-owned host and listener live-session model."""
 
 from __future__ import annotations
 
 import asyncio
 import json
-import tempfile
 from types import SimpleNamespace
 import unittest
-from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 from websockets.datastructures import Headers
 from websockets.http11 import Request
 
-from speech_web_server import (
+from live_session_manager import (
     LIVE_SESSION_ACTIVE_MESSAGE,
-    LiveSessionCoordinator,
-    handle_live_session,
-    process_http_request,
-    session_start_title,
+    LiveSessionError,
+    LiveSessionManager,
 )
-from session_store import SessionArchive, SessionTitleValidationError
+from speech_web_server import process_http_request
 
 
-class LiveSessionCoordinatorTest(unittest.IsolatedAsyncioTestCase):
-    async def test_first_websocket_command_supplies_the_session_title(self) -> None:
-        self.assertEqual(
-            "Customer session",
-            session_start_title(
-                json.dumps(
-                    {"type": "start", "title": "Customer session"}
-                )
-            ),
+class FakeArchive:
+    def __init__(self, title: str):
+        if not str(title or "").strip():
+            from session_store import SessionTitleValidationError
+
+            raise SessionTitleValidationError(
+                "SESSION_TITLE_REQUIRED",
+                "Enter a session name.",
+            )
+        self.session_id = "20260902T120000Z-1234abcd"
+        self.title = str(title).strip()
+        self.events: list[dict[str, object]] = []
+        self.audio: list[bytes] = []
+        self.finalize_calls: list[str] = []
+
+    def record_event(self, event: dict[str, object]) -> None:
+        self.events.append(event)
+
+    def write_audio(self, chunk: bytes) -> None:
+        self.audio.append(chunk)
+
+    def finalize(self, status: str) -> dict[str, object]:
+        self.finalize_calls.append(status)
+        return {
+            "session_id": self.session_id,
+            "title": self.title,
+            "status": status,
+            "started_at": "2026-09-02T12:00:00Z",
+            "ended_at": "2026-09-02T12:01:00Z",
+            "duration_seconds": 60,
+            "audio_available": bool(self.audio),
+            "english_available": True,
+            "french_available": True,
+            "session_report_available": True,
+        }
+
+
+class FakeOciSession:
+    def __init__(self, settings, event_sink, session_id=None):
+        self.settings = settings
+        self.event_sink = event_sink
+        self.session_id = session_id
+        self.audio: list[bytes] = []
+        self.stop_calls: list[bool] = []
+
+    async def start(self) -> None:
+        self.event_sink(
+            {
+                "type": "session_ready",
+                "sample_rate": 16000,
+                "encoding": "pcm_s16le",
+            }
         )
 
-    async def test_audio_before_start_is_rejected(self) -> None:
-        with self.assertRaises(SessionTitleValidationError) as context:
-            session_start_title(b"audio")
+    async def send_audio(self, chunk: bytes) -> None:
+        self.audio.append(chunk)
 
-        self.assertEqual("SESSION_START_REQUIRED", context.exception.code)
+    async def stop(self, request_final_result: bool = True) -> None:
+        self.stop_calls.append(request_final_result)
 
-    async def test_duplicate_title_is_rejected_before_oci_client_creation(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            root = Path(temporary_directory)
-            archive = SessionArchive("Customer session", root)
-            archive.finalize("completed")
-            coordinator = LiveSessionCoordinator()
-            websocket = SimpleNamespace(
-                request=SimpleNamespace(path="/ws/live"),
-                recv=AsyncMock(
-                    return_value=json.dumps(
-                        {"type": "start", "title": "customer SESSION"}
-                    )
-                ),
-                send=AsyncMock(),
-                close=AsyncMock(),
+
+class DelayedOciSession(FakeOciSession):
+    def __init__(self, settings, event_sink, session_id=None):
+        super().__init__(settings, event_sink, session_id)
+        self.continue_start = asyncio.Event()
+
+    async def start(self) -> None:
+        await self.continue_start.wait()
+        await super().start()
+
+
+def manager(**overrides) -> LiveSessionManager:
+    options = {
+        "archive_factory": FakeArchive,
+        "settings_factory": lambda: SimpleNamespace(),
+        "session_factory": FakeOciSession,
+        "reconnect_grace_seconds": 0.05,
+        "audio_queue_size": 2,
+        "outbound_queue_size": 16,
+    }
+    options.update(overrides)
+    return LiveSessionManager(**options)
+
+
+def drain(subscriber) -> list[dict[str, object]]:
+    events = []
+    while not subscriber.queue.empty():
+        event = subscriber.queue.get_nowait()
+        subscriber.queue.task_done()
+        if event is not None:
+            events.append(event)
+    return events
+
+
+class LiveSessionManagerTest(unittest.IsolatedAsyncioTestCase):
+    async def test_host_creates_one_logical_session_and_listener_joins(self) -> None:
+        coordinator = manager()
+        host = coordinator.subscriber("host")
+        live = await coordinator.start_host("Customer session", host)
+        host_events = drain(host)
+        created = next(event for event in host_events if event["type"] == "session_created")
+
+        self.assertTrue(coordinator.active)
+        self.assertEqual(live.session_id, created["session_id"])
+        self.assertEqual(live.join_code, created["join_code"])
+        self.assertTrue(created["resume_token"])
+
+        listener = coordinator.subscriber("listener")
+        await coordinator.join_listener(live.join_code.lower(), listener)
+        listener_events = drain(listener)
+        snapshot = next(event for event in listener_events if event["type"] == "session_snapshot")
+
+        self.assertEqual("listener", snapshot["role"])
+        self.assertIn("french_segments", snapshot)
+        self.assertNotIn("english_segments", snapshot)
+        await live.finalize("completed")
+
+    async def test_role_topics_only_deliver_the_needed_transcript(self) -> None:
+        coordinator = manager()
+        host = coordinator.subscriber("host")
+        live = await coordinator.start_host("Role routing", host)
+        listener = coordinator.subscriber("listener")
+        await coordinator.join_listener(live.join_code, listener)
+        drain(host)
+        drain(listener)
+
+        live.accept_oci_event(
+            {"type": "transcript", "text": "Hello everyone.", "is_final": True}
+        )
+        live.accept_oci_event(
+            {"type": "translation", "english": "Hello everyone.", "french": "Bonjour à tous."}
+        )
+
+        host_types = [event["type"] for event in drain(host)]
+        listener_types = [event["type"] for event in drain(listener)]
+        self.assertIn("transcript", host_types)
+        self.assertNotIn("translation", host_types)
+        self.assertIn("translation", listener_types)
+        self.assertNotIn("transcript", listener_types)
+        await live.finalize("completed")
+
+    async def test_second_host_is_rejected_but_listener_is_allowed(self) -> None:
+        coordinator = manager()
+        host = coordinator.subscriber("host")
+        live = await coordinator.start_host("Single host", host)
+
+        with self.assertRaises(LiveSessionError) as context:
+            await coordinator.start_host(
+                "Duplicate host",
+                coordinator.subscriber("host"),
             )
+        self.assertEqual("LIVE_SESSION_ACTIVE", context.exception.code)
+        self.assertEqual(LIVE_SESSION_ACTIVE_MESSAGE, str(context.exception))
 
-            with (
-                patch.dict(
-                    "os.environ",
-                    {"SESSION_STORAGE_DIR": str(root)},
-                ),
-                patch(
-                    "speech_web_server.LIVE_SESSION_COORDINATOR",
-                    coordinator,
-                ),
-                patch(
-                    "speech_web_server.SpeechTranslationSession"
-                ) as speech_session,
-            ):
-                await handle_live_session(websocket)
+        await coordinator.join_listener(
+            live.join_code,
+            coordinator.subscriber("listener"),
+        )
+        await live.finalize("completed")
 
-            payload = json.loads(websocket.send.await_args.args[0])
-            self.assertEqual("session_rejected", payload["type"])
-            self.assertEqual("SESSION_TITLE_CONFLICT", payload["code"])
-            speech_session.assert_not_called()
-            self.assertEqual(1, len(list(root.iterdir())))
+    async def test_host_refresh_resumes_same_archive_with_private_token(self) -> None:
+        coordinator = manager()
+        original_host = coordinator.subscriber("host")
+        live = await coordinator.start_host("Resume session", original_host)
+        live.accept_oci_event(
+            {"type": "transcript", "text": "Before refresh.", "is_final": True}
+        )
+        await coordinator.disconnect(original_host)
+        self.assertEqual("host_reconnecting", live.state)
 
-    async def test_only_one_owner_can_hold_the_live_session(self) -> None:
-        coordinator = LiveSessionCoordinator()
-        first_owner = asyncio.create_task(asyncio.sleep(60))
-        second_owner = asyncio.create_task(asyncio.sleep(60))
+        wrong_host = coordinator.subscriber("host")
+        with self.assertRaises(LiveSessionError):
+            await coordinator.resume_host(live.session_id, "wrong-token", wrong_host)
 
-        try:
-            self.assertTrue(coordinator.try_acquire(first_owner))
-            self.assertTrue(coordinator.active)
-            self.assertFalse(coordinator.try_acquire(second_owner))
+        resumed_host = coordinator.subscriber("host")
+        resumed = await coordinator.resume_host(
+            live.session_id,
+            live.host_token,
+            resumed_host,
+        )
+        snapshot = next(
+            event for event in drain(resumed_host) if event["type"] == "session_snapshot"
+        )
+        self.assertIs(live, resumed)
+        self.assertEqual(["Before refresh."], snapshot["english_segments"])
+        self.assertEqual("live", live.state)
+        await live.finalize("completed")
 
-            coordinator.release(first_owner)
-
-            self.assertFalse(coordinator.active)
-            self.assertTrue(coordinator.try_acquire(second_owner))
-        finally:
-            first_owner.cancel()
-            second_owner.cancel()
-            await asyncio.gather(
-                first_owner,
-                second_owner,
-                return_exceptions=True,
-            )
-
-    async def test_completed_owner_releases_the_live_session(self) -> None:
-        coordinator = LiveSessionCoordinator()
-        owner = asyncio.create_task(asyncio.sleep(0))
-
-        self.assertTrue(coordinator.try_acquire(owner))
-        await owner
-        await asyncio.sleep(0)
+    async def test_host_grace_expiry_finalizes_interrupted_once(self) -> None:
+        coordinator = manager(reconnect_grace_seconds=0.01)
+        host = coordinator.subscriber("host")
+        live = await coordinator.start_host("Interrupted session", host)
+        await coordinator.disconnect(host)
+        await asyncio.sleep(0.04)
 
         self.assertFalse(coordinator.active)
+        self.assertEqual(["interrupted"], live.archive.finalize_calls)
 
-    async def test_second_websocket_receives_clear_rejection(self) -> None:
-        coordinator = LiveSessionCoordinator()
-        owner = asyncio.create_task(asyncio.sleep(60))
-        self.assertTrue(coordinator.try_acquire(owner))
-        websocket = SimpleNamespace(
-            request=SimpleNamespace(path="/ws/live"),
-            send=AsyncMock(),
-            close=AsyncMock(),
+    async def test_disconnect_while_speech_connects_still_expires_host_lease(
+        self,
+    ) -> None:
+        coordinator = manager(
+            session_factory=DelayedOciSession,
+            reconnect_grace_seconds=0.02,
         )
+        host = coordinator.subscriber("host")
+        start_task = asyncio.create_task(
+            coordinator.start_host("Slow connection", host)
+        )
+        while coordinator.current is None:
+            await asyncio.sleep(0)
+        live = coordinator.current
+        assert live is not None
 
-        try:
-            with patch(
-                "speech_web_server.LIVE_SESSION_COORDINATOR",
-                coordinator,
-            ):
-                await handle_live_session(websocket)
+        await coordinator.disconnect(host)
+        self.assertEqual("host_reconnecting", live.state)
+        assert isinstance(live.oci_session, DelayedOciSession)
+        live.oci_session.continue_start.set()
+        await start_task
+        self.assertEqual("host_reconnecting", live.state)
+        await asyncio.sleep(0.04)
 
-            payload = json.loads(websocket.send.await_args.args[0])
-            self.assertEqual("session_rejected", payload["type"])
-            self.assertEqual("LIVE_SESSION_ACTIVE", payload["code"])
-            self.assertEqual(LIVE_SESSION_ACTIVE_MESSAGE, payload["message"])
-            websocket.close.assert_awaited_once_with(
-                code=1013,
-                reason=LIVE_SESSION_ACTIVE_MESSAGE,
+        self.assertFalse(coordinator.active)
+        self.assertEqual(["interrupted"], live.archive.finalize_calls)
+
+    async def test_session_factory_failure_releases_slot_and_archive(self) -> None:
+        archives: list[FakeArchive] = []
+
+        def archive_factory(title: str) -> FakeArchive:
+            archive = FakeArchive(title)
+            archives.append(archive)
+            return archive
+
+        def failed_session_factory(*args, **kwargs):
+            raise RuntimeError("client creation failed")
+
+        coordinator = manager(
+            archive_factory=archive_factory,
+            session_factory=failed_session_factory,
+        )
+        with self.assertRaisesRegex(RuntimeError, "client creation failed"):
+            await coordinator.start_host(
+                "Initialization failure",
+                coordinator.subscriber("host"),
             )
-        finally:
-            owner.cancel()
-            await asyncio.gather(owner, return_exceptions=True)
 
-    async def test_status_endpoint_reports_the_authoritative_state(self) -> None:
-        coordinator = LiveSessionCoordinator()
+        self.assertFalse(coordinator.active)
+        self.assertEqual(["failed"], archives[0].finalize_calls)
+
+    async def test_audio_is_queued_and_only_host_can_send_it(self) -> None:
+        coordinator = manager()
+        host = coordinator.subscriber("host")
+        live = await coordinator.start_host("Audio queue", host)
+        listener = coordinator.subscriber("listener")
+        await coordinator.join_listener(live.join_code, listener)
+
+        await live.queue_audio(host.subscriber_id, b"\x00\x00")
+        await live.audio_queue.join()
+        self.assertEqual([b"\x00\x00"], live.archive.audio)
+        self.assertEqual([b"\x00\x00"], live.oci_session.audio)
+        with self.assertRaises(LiveSessionError):
+            await live.queue_audio(listener.subscriber_id, b"\x00\x00")
+        await live.finalize("completed")
+
+    async def test_status_endpoint_reports_role_aware_state(self) -> None:
+        coordinator = manager()
         request = Request("/api/live-session", Headers())
-
-        with patch(
-            "speech_web_server.LIVE_SESSION_COORDINATOR",
-            coordinator,
-        ):
+        with patch("speech_web_server.LIVE_SESSION_MANAGER", coordinator):
             response = process_http_request(SimpleNamespace(), request)
-            self.assertIsNotNone(response)
-            self.assertEqual({"active": False}, json.loads(response.body))
+            self.assertEqual({"active": False, "state": "idle"}, json.loads(response.body))
 
-            owner = asyncio.create_task(asyncio.sleep(60))
-            try:
-                coordinator.try_acquire(owner)
-                response = process_http_request(SimpleNamespace(), request)
-                self.assertEqual({"active": True}, json.loads(response.body))
-            finally:
-                owner.cancel()
-                await asyncio.gather(owner, return_exceptions=True)
+            host = coordinator.subscriber("host")
+            live = await coordinator.start_host("Status session", host)
+            response = process_http_request(SimpleNamespace(), request)
+            payload = json.loads(response.body)
+            self.assertTrue(payload["active"])
+            self.assertEqual("live", payload["state"])
+            self.assertTrue(payload["host_connected"])
+            await live.finalize("completed")
 
 
 if __name__ == "__main__":

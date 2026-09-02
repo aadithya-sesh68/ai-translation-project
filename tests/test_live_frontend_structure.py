@@ -1,4 +1,4 @@
-"""Structural checks for the audience-first live caption page."""
+"""Structural checks for the Redwood host/listener live caption page."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ PROJECT_ROOT = Path(__file__).parents[1]
 
 
 class LiveFrontendStructureTest(unittest.TestCase):
-    def test_french_caption_is_the_primary_live_surface(self) -> None:
+    def test_role_entry_and_role_specific_caption_surfaces_are_present(self) -> None:
         html = (PROJECT_ROOT / "web" / "index.html").read_text(
             encoding="utf-8"
         )
@@ -19,9 +19,25 @@ class LiveFrontendStructureTest(unittest.TestCase):
         self.assertIn('<h1 class="overview-title">', html)
         self.assertIn('class="overview-title__strong">OraTranslate</span>', html)
         self.assertIn("<span>Live</span>", html)
-        self.assertIn('id="current-french-caption"', html)
-        self.assertIn('class="current-french-caption waiting-caption"', html)
-        self.assertIn('id="translation-list"', html)
+        self.assertIn('id="role-entry"', html)
+        self.assertIn('id="host-mode-button"', html)
+        self.assertIn('id="listener-mode-button"', html)
+        self.assertIn('id="host-workspace"', html)
+        self.assertIn('id="listener-join"', html)
+        self.assertIn('id="listener-workspace"', html)
+
+        host_surface = html.split('id="host-workspace"', 1)[1].split(
+            'id="listener-join"', 1
+        )[0]
+        listener_surface = html.split('id="listener-workspace"', 1)[1].split(
+            'id="session-archives-panel"', 1
+        )[0]
+        self.assertIn('id="current-english-caption"', host_surface)
+        self.assertIn('id="transcript-list"', host_surface)
+        self.assertNotIn('id="current-french-caption"', host_surface)
+        self.assertIn('id="current-french-caption"', listener_surface)
+        self.assertIn('id="translation-list"', listener_surface)
+        self.assertNotIn('id="current-english-caption"', listener_surface)
 
     def test_redwood_overview_structure_and_assets_are_present(self) -> None:
         web_root = PROJECT_ROOT / "web"
@@ -68,18 +84,12 @@ class LiveFrontendStructureTest(unittest.TestCase):
             encoding="utf-8"
         )
 
-        self.assertIn('<details class="source-panel">', html)
         self.assertIn('id="live-session-tab"', html)
         self.assertIn('id="session-archives-tab"', html)
         self.assertIn('id="live-session-panel"', html)
         self.assertIn('id="session-archives-panel"', html)
-        self.assertIn('class="session-library ', html)
+        self.assertIn('class="session-library overview-section"', html)
         self.assertIn('aria-labelledby="session-archives-tab"', html)
-        self.assertNotIn('<details class="source-panel" open>', html)
-        self.assertNotIn(
-            '<details class="session-library"',
-            html,
-        )
 
         archive_panel = html.split('id="session-archives-panel"', 1)[1]
         self.assertIn("hidden", archive_panel.split(">", 1)[0])
@@ -103,19 +113,27 @@ class LiveFrontendStructureTest(unittest.TestCase):
         self.assertIn("const latestTranslation = frenchSegments.at(-1);", script)
         self.assertIn("currentFrenchCaption.textContent", script)
 
-    def test_only_current_french_caption_is_a_live_region(self) -> None:
+    def test_only_current_role_captions_are_live_regions(self) -> None:
         html = (PROJECT_ROOT / "web" / "index.html").read_text(
             encoding="utf-8"
         )
 
-        current_caption = html.split('id="current-french-caption"', 1)[1].split(
+        english_caption = html.split('id="current-english-caption"', 1)[1].split(
+            ">", 1
+        )[0]
+        french_caption = html.split('id="current-french-caption"', 1)[1].split(
+            ">", 1
+        )[0]
+        transcript_history = html.split('id="transcript-list"', 1)[1].split(
             ">", 1
         )[0]
         translation_history = html.split('id="translation-list"', 1)[1].split(
             ">", 1
         )[0]
 
-        self.assertIn('aria-live="polite"', current_caption)
+        self.assertIn('aria-live="polite"', english_caption)
+        self.assertIn('aria-live="polite"', french_caption)
+        self.assertNotIn("aria-live", transcript_history)
         self.assertNotIn("aria-live", translation_history)
 
     def test_translation_errors_use_a_separate_progressive_message_area(self) -> None:
@@ -128,8 +146,8 @@ class LiveFrontendStructureTest(unittest.TestCase):
 
         self.assertIn('id="translation-alerts"', html)
         self.assertIn('aria-label="Translation notices"', html)
-        self.assertIn('technicalSummary.textContent = "Technical details"', script)
-        self.assertIn("translationAlerts.append(banner)", script)
+        self.assertIn('detailsSummary.textContent = "Technical details"', script)
+        self.assertIn("target.append(banner)", script)
         self.assertNotIn("translationList.append(card)", script)
 
     def test_saved_session_deletion_uses_an_accessible_dialog(self) -> None:
@@ -186,7 +204,7 @@ class LiveFrontendStructureTest(unittest.TestCase):
         required_position = html.index('class="required-message"')
         title_validation = script.split(
             "async function validateSessionTitleForStart()", 1
-        )[1].split("function liveSessionInProgress()", 1)[0]
+        )[1].split("function activateView", 1)[0]
 
         self.assertIn("required", title_input)
         self.assertIn('aria-describedby="session-title-message"', title_input)
@@ -197,28 +215,30 @@ class LiveFrontendStructureTest(unittest.TestCase):
         self.assertIn("validateSessionTitleForStart()", script)
         self.assertIn('applicationPath("/api/sessions")', script)
         self.assertIn("SESSION_TITLE_CONFLICT_MESSAGE", script)
-        self.assertIn("sessionTitle: normalizeSessionTitle", script)
-        self.assertIn("savedResults.sessionTitle", script)
-        self.assertNotIn('setStatus("error"', title_validation)
+        self.assertIn('connectLiveSocket({ type: "start", title })', script)
+        self.assertIn('case "session_snapshot":', script)
+        self.assertNotIn('setHostStatus("error"', title_validation)
 
     def test_live_controls_use_an_item_overview_left_card(self) -> None:
         html = (PROJECT_ROOT / "web" / "index.html").read_text(
             encoding="utf-8"
         )
-        live_panel = html.split('id="live-session-panel"', 1)[1]
-        overview_position = live_panel.index('class="live-item-overview"')
-        command_center = live_panel.split(
+        host_surface = html.split('id="host-workspace"', 1)[1].split(
+            'id="listener-join"', 1
+        )[0]
+        overview_position = host_surface.index('class="live-item-overview"')
+        command_center = host_surface.split(
             'class="session-command-center"', 1
         )[1].split('class="live-item-overview__content"', 1)[0]
 
         controls_position = command_center.index('class="session-controls"')
         status_position = command_center.index('class="status-panel"')
         microphone_position = command_center.index('id="microphone-monitor"')
-        content_position = live_panel.index('class="live-item-overview__content"')
-        caption_position = live_panel.index('class="caption-stage"')
+        content_position = host_surface.index('class="live-item-overview__content"')
+        caption_position = host_surface.index('class="caption-stage"')
 
         self.assertGreater(overview_position, 0)
-        self.assertIn('<aside\n                      class="session-command-center"', live_panel)
+        self.assertIn('<aside class="session-command-center"', host_surface)
         self.assertIn('id="session-details-heading"', command_center)
         self.assertLess(controls_position, status_position)
         self.assertLess(status_position, microphone_position)
@@ -238,8 +258,10 @@ class LiveFrontendStructureTest(unittest.TestCase):
 
         self.assertIn("audioContext.createAnalyser()", script)
         self.assertIn("getByteTimeDomainData", script)
-        self.assertIn("window.requestAnimationFrame(updateMeter)", script)
-        self.assertIn('setMicrophoneState(\n    "active"', script)
+        self.assertIn("requestAnimationFrame(updateMeter)", script)
+        self.assertIn('setMicrophoneState("active"', script)
+        self.assertIn('type: "audio_level"', script)
+        self.assertIn("renderLevel(speakerLevel", script)
 
     def test_archive_audio_is_coordinated_across_browser_tabs(self) -> None:
         html = (PROJECT_ROOT / "web" / "index.html").read_text(
@@ -255,8 +277,35 @@ class LiveFrontendStructureTest(unittest.TestCase):
         self.assertIn('type: "archive_playback_started"', script)
         self.assertIn('type: "archive_playback_pause"', script)
         self.assertIn("pauseArchivePlaybackAcrossTabs();", script)
-        self.assertIn('case "archive_playback_started":', script)
-        self.assertIn('case "archive_playback_pause":', script)
+        self.assertIn('event.data?.type === "archive_playback_started"', script)
+        self.assertIn('event.data?.type === "archive_playback_pause"', script)
+
+    def test_host_refresh_and_listener_rejoin_use_server_snapshots(self) -> None:
+        script = (PROJECT_ROOT / "web" / "app.js").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('type: "resume"', script)
+        self.assertIn('resume_token: storedHost.resume_token', script)
+        self.assertIn('type: "join"', script)
+        self.assertIn('case "session_snapshot":', script)
+        self.assertIn("event.english_segments", script)
+        self.assertIn("event.french_segments", script)
+        self.assertIn("scheduleListenerReconnect", script)
+
+    def test_listener_surface_has_no_microphone_or_session_controls(self) -> None:
+        html = (PROJECT_ROOT / "web" / "index.html").read_text(
+            encoding="utf-8"
+        )
+        listener_surface = html.split('id="listener-workspace"', 1)[1].split(
+            'id="session-archives-panel"', 1
+        )[0]
+
+        self.assertIn('id="speaker-monitor"', listener_surface)
+        self.assertIn('aria-label="Speaker microphone level"', listener_surface)
+        self.assertNotIn('id="start-button"', listener_surface)
+        self.assertNotIn('id="stop-button"', listener_surface)
+        self.assertNotIn('id="microphone-monitor"', listener_surface)
 
 
 if __name__ == "__main__":

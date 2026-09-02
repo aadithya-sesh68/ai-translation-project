@@ -1,4 +1,4 @@
-# OCI live English-to-French browser prototype
+# OraTranslate host/listener live translation prototype
 
 This local client/server app captures microphone audio in the browser, converts
 it to 16 kHz mono signed 16-bit PCM, and streams it to a Python WebSocket
@@ -17,9 +17,16 @@ $env:OCI_COMPARTMENT_ID = 'ocid1.compartment.oc1..replace_with_yours'
 python speech_web_server.py
 ```
 
-Then open <http://localhost:8765> in Edge or Chrome, optionally enter a session
-name, select **Start session**, allow microphone access, speak English, and
-select **End session** to flush the final segment and save the outputs.
+Then open <http://localhost:8765> in Edge or Chrome. On the dedicated speaker
+device, choose **Host the session**, enter a required unique session name,
+select **Start session**, and allow microphone access. Share the generated
+six-character listener code. On the client device, choose **Join as a
+listener**, enter that code, and follow the French captions. The host selects
+**End session** to flush the final segment and save the outputs.
+
+Both roles can be tested locally by opening the application in two Chrome
+windows. Only the host window requests microphone access; the listener window
+receives captions and an audio-level visualization, not the live audio stream.
 
 The defaults match this prototype:
 
@@ -27,6 +34,8 @@ The defaults match this prototype:
 - OCI profile: `DEFAULT`
 - OCI region: `us-phoenix-1` (or the profile's region)
 - Translation grouping window: 1.5 seconds
+- Host browser reconnect window: 60 seconds
+- Bounded translation, audio, and per-browser event queues
 - Web server: `127.0.0.1:8765`
 
 `OCI_COMPARTMENT_ID` is required. Other overrides for the current PowerShell
@@ -37,6 +46,10 @@ $env:OCI_CONFIG_PROFILE = 'DEFAULT'
 $env:OCI_REGION = 'us-phoenix-1'
 $env:OCI_COMPARTMENT_ID = 'ocid1.compartment.oc1..replace_with_yours'
 $env:TRANSLATION_BUFFER_SECONDS = '1.5'
+$env:TRANSLATION_QUEUE_MAX_ITEMS = '120'
+$env:AUDIO_QUEUE_MAX_CHUNKS = '64'
+$env:CLIENT_EVENT_QUEUE_MAX_ITEMS = '128'
+$env:HOST_RECONNECT_GRACE_SECONDS = '60'
 $env:ORATRANSLATE_LOG_LEVEL = 'INFO'
 $env:SPEECH_WEB_PORT = '8765'
 $env:SPEECH_WEB_ALLOWED_ORIGINS = 'http://localhost:8080,https://speech.customer.example'
@@ -51,7 +64,8 @@ cannot accidentally fall back to temporary session authentication.
 The server creates two independent `oci.signer.Signer` instances from the same
 profile: one is owned by OCI Speech Realtime and one is owned by the dedicated
 Language `TranslationService`. Each signer and client is reused for its own
-service throughout one live browser session. Do not put private keys or their
+service throughout one logical live session. Browser host/listener connections
+do not create additional OCI clients. Do not put private keys or their
 contents in environment variables or source files. The server reads the
 private-key path from the OCI config profile and never sends credentials to the
 browser.
@@ -88,39 +102,48 @@ the compartment together; changing only the signer cannot grant IAM access.
 
 API signing keys don't have the short lifetime of OCI CLI session tokens.
 However, a long-running customer session must still handle ordinary network,
-browser, proxy, or service WebSocket disconnections. Automatic reconnection is
-not yet implemented in this prototype.
+browser, proxy, or service WebSocket disconnections. Host browser refresh and
+short host network interruptions can resume the same server-owned session
+within the configured grace window. Listener connections rejoin from a server
+snapshot. Automatic reconnection of a failed upstream OCI Speech Realtime
+connection isn't yet implemented.
 
 ## Request flow
 
-1. The browser requests microphone permission only after **Start session**.
-2. An AudioWorklet resamples the browser's native audio rate to 16 kHz PCM.
-3. Binary PCM chunks travel over the same-origin `/ws/live` WebSocket.
-4. The server opens one OCI Speech session per browser session.
-5. Final English segments appear immediately and are grouped briefly for OCI
+1. The entry view asks whether the device is the session host or a listener.
+2. The host browser requests microphone permission only after **Start
+   session** and receives a private resume token plus a public listener code.
+3. A listener joins with the public code and never requests microphone access.
+4. An AudioWorklet resamples the host browser's native audio rate to 16 kHz PCM.
+5. Binary PCM chunks travel over the host's same-origin `/ws/live` WebSocket
+   and pass through a bounded server audio queue.
+6. The server opens one OCI Speech session and one OCI Language client per
+   logical live session, not per listener or translated sentence.
+7. Final English segments appear on the host and are grouped briefly for OCI
    Language translation.
-6. **End session** flushes remaining audio, requests the final Speech result,
+8. French results are published to listener browser queues. Server snapshots
+   restore the appropriate complete transcript when either role reconnects.
+9. **End session** flushes remaining audio, requests the final Speech result,
    and completes queued translations.
-7. The server closes the MP3 recording and saves English, French, metadata,
+10. The server closes the MP3 recording and saves English, French, metadata,
    safe OCI error details, and an operational session report in a
    session-specific folder.
-8. The **Session Archives** tab refreshes automatically so the completed
+11. The **Session Archives** tab refreshes automatically so the completed
    session can be played and its text outputs reviewed or downloaded without
    crowding the primary **Live Session** view.
 
-Only one live audio-capture session can run in a server process. The server
-authoritatively rejects a second `/ws/live` connection while the first session
-is active. Browser tabs on the same origin also coordinate through
-`BroadcastChannel`, disable **Start session**, and show that another
-OraTranslate session is active. Tabs reconcile that convenience state against
-`GET /api/live-session`, so a closed or crashed tab doesn't leave the controls
-permanently disabled. The slot is released after normal completion,
-disconnection, startup failure, or cleanup. This restriction applies only to
-live capture; it doesn't prevent users from reviewing saved sessions.
+Only one logical live session can run in a server process. It owns one host
+lease and permits listener connections. A second host is rejected, while a
+listener with the active public code receives a role-specific snapshot and
+future French events. The server remains authoritative even if browser-side
+coordination is bypassed. Archive browsing remains available in every tab.
 
-Live English text, French translations, and displayed diagnostics are also kept
-temporarily in the browser tab's session storage so refreshing the page can
-restore the last live view. Starting a new session clears that live view.
+The logical session is owned by the server rather than by one WebSocket. A host
+refresh pauses capture and starts a configurable reconnect grace period; the
+same tab can reacquire the microphone and resume with its private token. If the
+host doesn't return, the server finalizes the session as `interrupted`. A
+listener refresh automatically rejoins with its saved code and receives the
+French transcript from the beginning.
 
 Completed outputs persist on the server under `recorded_sessions` by default:
 
@@ -144,15 +167,16 @@ how many detailed entries were omitted. The saved-session viewer provides a
 older application versions don't have a report and keep their existing outputs.
 
 The MP3 is encoded directly from the same 16 kHz mono PCM stream sent to OCI
-Speech. If the browser disconnects without **End session**, the server still
-finalizes the available outputs and marks the saved session as `interrupted`.
+Speech. If the host remains disconnected beyond the recovery window without
+**End session**, the server finalizes the available outputs and marks the saved
+session as `interrupted`.
 OCI credentials are never written into a session folder or sent to the browser.
 
 Refreshing the browser does not delete completed sessions. The session library
-is rebuilt from the server folders after every refresh. The current tab's last
-live English/French view is also restored from browser session storage. If a
-page is refreshed during an active session, that connection ends and the server
-saves the available recording and text as an `interrupted` session.
+is rebuilt from the server folders after every refresh. Refreshing a listener
+restores the live French transcript from the server. Refreshing the host pauses
+capture until the microphone is explicitly reconnected; it does not create a
+second archive.
 
 Use **Delete saved session** in the selected session viewer to permanently
 remove that session's complete server folder. The UI requires confirmation;

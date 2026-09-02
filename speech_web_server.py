@@ -23,14 +23,18 @@ from oci_speech_service import (
     run_translation_reliability_test,
     safe_error_details,
 )
+from live_session_manager import (
+    LIVE_SESSION_ACTIVE_MESSAGE,
+    BrowserSubscriber,
+    LiveSessionError,
+    LiveSessionManager,
+)
 from session_store import (
-    SessionArchive,
     SessionTitleValidationError,
     delete_session,
     get_session,
     get_session_file,
     list_sessions,
-    public_session,
 )
 from structured_logging import configure_structured_logging, log_event
 
@@ -68,33 +72,7 @@ def static_file_for_path(path: str) -> Path | None:
     return candidate
 
 
-class LiveSessionCoordinator:
-    """Allow one authoritative live audio-capture session per server process."""
-
-    def __init__(self) -> None:
-        self._owner: asyncio.Task[Any] | None = None
-
-    @property
-    def active(self) -> bool:
-        return self._owner is not None and not self._owner.done()
-
-    def try_acquire(self, owner: asyncio.Task[Any]) -> bool:
-        """Atomically claim the single live-session slot on this event loop."""
-
-        if self.active:
-            return False
-
-        self._owner = owner
-        owner.add_done_callback(self.release)
-        return True
-
-    def release(self, owner: asyncio.Task[Any]) -> None:
-        if self._owner is owner:
-            self._owner = None
-
-
-LIVE_SESSION_COORDINATOR = LiveSessionCoordinator()
-LIVE_SESSION_ACTIVE_MESSAGE = "Another OraTranslate session is already active."
+LIVE_SESSION_MANAGER = LiveSessionManager()
 
 
 def allowed_websocket_origins(port: int) -> list[str]:
@@ -243,7 +221,7 @@ def process_http_request(
             )
         return json_response(
             HTTPStatus.OK,
-            {"active": LIVE_SESSION_COORDINATOR.active},
+            LIVE_SESSION_MANAGER.status(),
         )
 
     api_response = session_api_response(request, path)
@@ -307,274 +285,188 @@ async def send_events(
         event = await event_queue.get()
         try:
             if event is None:
+                await websocket.close()
                 return
             await websocket.send(json.dumps(event))
         except ConnectionClosed:
             return
         finally:
-                event_queue.task_done()
-
-
-def session_start_title(message: str | bytes) -> Any:
-    """Read the required title from the WebSocket's first command."""
-
-    if isinstance(message, bytes):
-        raise SessionTitleValidationError(
-            "SESSION_START_REQUIRED",
-            "Start the session before sending microphone audio.",
-        )
-    try:
-        command = json.loads(message)
-    except json.JSONDecodeError as error:
-        raise SessionTitleValidationError(
-            "SESSION_START_REQUIRED",
-            "The session start request was not valid.",
-        ) from error
-    if not isinstance(command, dict) or command.get("type") != "start":
-        raise SessionTitleValidationError(
-            "SESSION_START_REQUIRED",
-            "The first request must start the session.",
-        )
-    return command.get("title")
+            event_queue.task_done()
 
 
 async def handle_live_session(websocket: ServerConnection) -> None:
-    if not websocket.request or websocket.request.path != "/ws/live":
+    if (
+        not websocket.request
+        or urlsplit(websocket.request.path).path != "/ws/live"
+    ):
         await websocket.close(code=1008, reason="Unsupported WebSocket path")
         return
-
-    owner = asyncio.current_task()
-    if owner is None or not LIVE_SESSION_COORDINATOR.try_acquire(owner):
-        log_event(
-            LOGGER,
-            logging.WARNING,
-            "live_session_rejected",
-            LIVE_SESSION_ACTIVE_MESSAGE,
-            stage="session",
-            code="LIVE_SESSION_ACTIVE",
-        )
-        await websocket.send(
-            json.dumps(
-                {
-                    "type": "session_rejected",
-                    "stage": "session",
-                    "code": "LIVE_SESSION_ACTIVE",
-                    "message": LIVE_SESSION_ACTIVE_MESSAGE,
-                }
-            )
-        )
-        await websocket.close(code=1013, reason=LIVE_SESSION_ACTIVE_MESSAGE)
-        return
-
-    event_queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
-
-    def publish(event: dict[str, Any]) -> None:
-        event_queue.put_nowait(event)
-
-    sender_task = asyncio.create_task(send_events(websocket, event_queue))
-    session: SpeechTranslationSession | None = None
-    archive: SessionArchive | None = None
-    session_started = False
-    stop_requested = False
-
-    #Record event in Session Archive and send event to browser
-    def publish_and_record(event: dict[str, Any]) -> None:
-        if archive:
-            archive.record_event(event)
-        publish(event)
+    subscriber: BrowserSubscriber | None = None
+    sender_task: asyncio.Task[None] | None = None
+    managed = None
 
     try:
-        archive = SessionArchive(session_start_title(await websocket.recv()))
-        settings = OciSpeechSettings.from_environment()
-        session = SpeechTranslationSession(
-            settings,
-            publish_and_record,
-            session_id=archive.session_id,
+        first_message = await websocket.recv()
+        if isinstance(first_message, bytes):
+            raise LiveSessionError(
+                "SESSION_COMMAND_REQUIRED",
+                "Choose Host or Listener before sending audio.",
+            )
+        try:
+            command = json.loads(first_message)
+        except json.JSONDecodeError as error:
+            raise LiveSessionError(
+                "SESSION_COMMAND_REQUIRED",
+                "The session request was not valid.",
+            ) from error
+        if not isinstance(command, dict):
+            raise LiveSessionError(
+                "SESSION_COMMAND_REQUIRED",
+                "The session request was not valid.",
+            )
+
+        command_type = command.get("type")
+        role = "listener" if command_type == "join" else "host"
+        subscriber = LIVE_SESSION_MANAGER.subscriber(role)
+        sender_task = asyncio.create_task(
+            send_events(websocket, subscriber.queue)
         )
-        log_event(
-            LOGGER,
-            logging.INFO,
-            "live_session_created",
-            "Browser live session created",
-            session_id=archive.session_id,
-            region=settings.region,
-            profile=settings.profile_name,
-            authentication="api_key",
-        )
-        publish_and_record(
-            {
-                "type": "session_status",
-                "state": "connecting",
-                "message": "Connecting to OCI Speech Realtime...",
-            }
-        )
-        await session.start()
-        session_started = True
+
+        if command_type == "start":
+            managed = await LIVE_SESSION_MANAGER.start_host(
+                command.get("title"),
+                subscriber,
+            )
+            log_event(
+                LOGGER,
+                logging.INFO,
+                "live_session_created",
+                "Server-owned live session created",
+                session_id=managed.session_id,
+                role="host",
+            )
+        elif command_type == "resume":
+            managed = await LIVE_SESSION_MANAGER.resume_host(
+                command.get("session_id"),
+                command.get("resume_token"),
+                subscriber,
+            )
+        elif command_type == "join":
+            managed = await LIVE_SESSION_MANAGER.join_listener(
+                command.get("join_code"),
+                subscriber,
+            )
+        else:
+            raise LiveSessionError(
+                "SESSION_COMMAND_REQUIRED",
+                "Choose Host or Listener to continue.",
+            )
 
         async for message in websocket:
             if isinstance(message, bytes):
+                if subscriber.role != "host":
+                    continue
                 if len(message) > 128 * 1024:
-                    publish(
+                    managed.accept_oci_event(
                         {
                             "type": "error",
                             "stage": "audio",
+                            "code": "AUDIO_CHUNK_TOO_LARGE",
                             "message": "Audio chunk exceeded 128 KiB.",
                         }
                     )
                     continue
-
                 if len(message) % 2:
-                    publish_and_record(
+                    managed.accept_oci_event(
                         {
                             "type": "error",
                             "stage": "audio",
+                            "code": "INVALID_PCM_LENGTH",
                             "message": "PCM audio chunk had an invalid length.",
                         }
                     )
                     continue
-
-                archive.write_audio(message)
-                await session.send_audio(message)
+                await managed.queue_audio(subscriber.subscriber_id, message)
                 continue
 
             try:
-                command = json.loads(message)
+                browser_command = json.loads(message)
             except json.JSONDecodeError:
                 continue
-
-            if command.get("type") == "stop":
-                stop_requested = True
-                publish_and_record(
-                    {
-                        "type": "session_status",
-                        "state": "finalizing",
-                        "message": "Finalizing the last speech segment...",
-                    }
+            if not isinstance(browser_command, dict):
+                continue
+            if (
+                browser_command.get("type") == "audio_level"
+                and subscriber.role == "host"
+            ):
+                managed.publish_audio_level(
+                    subscriber.subscriber_id,
+                    browser_command.get("level"),
+                )
+            elif (
+                browser_command.get("type") == "stop"
+                and subscriber.role == "host"
+            ):
+                await LIVE_SESSION_MANAGER.stop_host(
+                    subscriber.subscriber_id
                 )
                 break
 
-    except SessionTitleValidationError as error:
+    except (LiveSessionError, SessionTitleValidationError) as error:
+        code = getattr(error, "code", "SESSION_REJECTED")
         log_event(
             LOGGER,
             logging.WARNING,
             "live_session_rejected",
             str(error),
             stage="session",
-            code=error.code,
+            code=code,
         )
-        publish(
-            {
-                "type": "session_rejected",
-                "stage": "session",
-                "code": error.code,
-                "message": str(error),
-            }
-        )
+        rejection = {
+            "type": "session_rejected",
+            "stage": "session",
+            "code": code,
+            "message": str(error),
+        }
+        if subscriber:
+            subscriber.queue.put_nowait(rejection)
+        else:
+            await websocket.send(json.dumps(rejection))
     except ConnectionClosed as error:
         log_event(
             LOGGER,
             logging.INFO,
             "browser_websocket_closed",
             "Browser WebSocket closed",
-            session_id=archive.session_id if archive else None,
+            session_id=managed.session_id if managed else None,
+            role=subscriber.role if subscriber else None,
             status=getattr(error, "code", None),
             close_reason=getattr(error, "reason", None),
         )
     except Exception as error:
         details = safe_error_details(error, "session")
         LOGGER.exception(
-            "Live session failed",
+            "Live session browser connection failed",
             extra={
-                "event": "live_session_failed",
-                "session_id": archive.session_id if archive else None,
-                "stage": "session",
-                "status": details.get("status"),
-                "code": details.get("code"),
-                "opc_request_id": details.get("opc_request_id"),
+                "event": "live_session_connection_failed",
+                "session_id": managed.session_id if managed else None,
+                "role": subscriber.role if subscriber else None,
                 "error_type": type(error).__name__,
             },
         )
-        publish_and_record(details)
+        if subscriber and managed and managed.state != "ended":
+            managed.accept_oci_event(details)
+        elif subscriber:
+            subscriber.queue.put_nowait(details)
     finally:
-        if session:
-            try:
-                await session.stop(
-                    request_final_result=session_started and stop_requested
-                )
-            except Exception as error:
-                details = safe_error_details(error, "session_cleanup")
-                LOGGER.exception(
-                    "Live session cleanup failed",
-                    extra={
-                        "event": "live_session_cleanup_failed",
-                        "session_id": archive.session_id if archive else None,
-                        "stage": "session_cleanup",
-                        "status": details.get("status"),
-                        "code": details.get("code"),
-                        "opc_request_id": details.get("opc_request_id"),
-                        "error_type": type(error).__name__,
-                    },
-                )
-                publish_and_record(details)
-
-        saved_session: dict[str, Any] | None = None
-        if archive:
-            try:
-                saved_session = public_session(
-                    archive.finalize(
-                        "completed"
-                        if stop_requested
-                        else "interrupted"
-                        if session_started
-                        else "failed"
-                    )
-                )
-                publish(
-                    {
-                        "type": "session_saved",
-                        "session": saved_session,
-                    }
-                )
-                log_event(
-                    LOGGER,
-                    logging.INFO,
-                    "session_archive_saved",
-                    "Session recording and transcripts saved",
-                    session_id=archive.session_id,
-                    session_status=saved_session.get("status"),
-                    duration_seconds=saved_session.get("duration_seconds"),
-                    audio_available=saved_session.get("audio_available"),
-                    english_available=saved_session.get("english_available"),
-                    french_available=saved_session.get("french_available"),
-                )
-            except Exception as error:
-                LOGGER.exception(
-                    "Session output could not be saved",
-                    extra={
-                        "event": "session_archive_failed",
-                        "session_id": archive.session_id,
-                        "stage": "session_storage",
-                        "error_type": type(error).__name__,
-                    },
-                )
-                publish(safe_error_details(error, "session_storage"))
-
-        if stop_requested:
-            publish(
-                {
-                    "type": "session_stopped",
-                    "message": (
-                        "Session ended and outputs were saved."
-                        if saved_session
-                        else "Session ended, but its outputs could not be saved."
-                    ),
-                }
-            )
-
-        await event_queue.put(None)
-        await sender_task
-        LIVE_SESSION_COORDINATOR.release(owner)
-        await websocket.close()
+        if subscriber:
+            await LIVE_SESSION_MANAGER.disconnect(subscriber)
+            if sender_task and not sender_task.done():
+                await subscriber.queue.put(None)
+        if sender_task:
+            await sender_task
+        else:
+            await websocket.close()
 
 
 def validate_translation_test_command(
@@ -690,7 +582,9 @@ async def handle_translation_test(websocket: ServerConnection) -> None:
 async def handle_websocket(websocket: ServerConnection) -> None:
     """Dispatch each same-origin WebSocket path to its handler."""
 
-    path = websocket.request.path if websocket.request else ""
+    path = (
+        urlsplit(websocket.request.path).path if websocket.request else ""
+    )
     if path == "/ws/live":
         await handle_live_session(websocket)
     elif path == "/ws/translation-test":

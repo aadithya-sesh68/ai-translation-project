@@ -37,6 +37,7 @@ class OciSpeechSettings:
     compartment_id: str
     region: str
     translation_buffer_seconds: float = 1.5
+    translation_queue_max_items: int = 120
     speech_ready_timeout_seconds: float = 15.0
     final_result_wait_seconds: float = 2.0
 
@@ -69,6 +70,9 @@ class OciSpeechSettings:
             ),
             translation_buffer_seconds=float(
                 os.environ.get("TRANSLATION_BUFFER_SECONDS", "1.5")
+            ),
+            translation_queue_max_items=int(
+                os.environ.get("TRANSLATION_QUEUE_MAX_ITEMS", "120")
             ),
         )
 
@@ -293,6 +297,7 @@ class SpeechTranslationListener(RealtimeSpeechClientListener):
         event_sink: EventSink,
         event_loop: asyncio.AbstractEventLoop,
         translation_buffer_seconds: float,
+        translation_queue_max_items: int = 120,
         session_id: str | None = None,
     ) -> None:
         self.translation_service = translation_service
@@ -302,7 +307,9 @@ class SpeechTranslationListener(RealtimeSpeechClientListener):
         self.session_id = session_id
 
         self.pending_segments: list[str] = []
-        self.translation_queue: asyncio.Queue[str | None] = asyncio.Queue()
+        self.translation_queue: asyncio.Queue[str | None] = asyncio.Queue(
+            maxsize=max(1, translation_queue_max_items)
+        )
         self.translation_worker_task: asyncio.Task[None] | None = None
         self.buffer_timer_task: asyncio.Task[None] | None = None
 
@@ -424,8 +431,34 @@ class SpeechTranslationListener(RealtimeSpeechClientListener):
         english_text = " ".join(self.pending_segments).strip()
         self.pending_segments.clear()
 
-        if english_text:
-            self.translation_queue.put_nowait(english_text)
+        if not english_text:
+            return
+
+        if self.translation_queue.full():
+            queued_passages: list[str] = []
+            while True:
+                try:
+                    queued = self.translation_queue.get_nowait()
+                    self.translation_queue.task_done()
+                    if queued:
+                        queued_passages.append(queued)
+                except asyncio.QueueEmpty:
+                    break
+            queued_passages.append(english_text)
+            english_text = " ".join(queued_passages)
+            self._publish(
+                {
+                    "type": "queue_status",
+                    "queue": "translation",
+                    "state": "coalesced",
+                    "message": (
+                        "Translation processing fell behind; adjacent English "
+                        "segments were grouped to preserve order."
+                    ),
+                }
+            )
+
+        self.translation_queue.put_nowait(english_text)
 
     async def translation_worker(self) -> None:
         while True:
@@ -579,6 +612,9 @@ class SpeechTranslationSession:
             event_loop=asyncio.get_running_loop(),
             translation_buffer_seconds=(
                 self.settings.translation_buffer_seconds
+            ),
+            translation_queue_max_items=(
+                self.settings.translation_queue_max_items
             ),
             session_id=self.session_id,
         )

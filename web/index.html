@@ -58,171 +58,159 @@
                 tabindex="0"
               >
                 <section class="overview-section live-workflow" aria-label="Live session">
-                  <div class="live-item-overview">
-                    <aside
-                      class="session-command-center"
-                      aria-labelledby="session-details-heading"
-                    >
-                      <div class="session-card-heading">
-                        <h3 id="session-details-heading">Session details</h3>
-                      </div>
-
-                      <section class="session-controls" aria-label="Session controls">
-                        <label for="session-title">Session name</label>
-                        <input
-                          id="session-title"
-                          type="text"
-                          maxlength="120"
-                          placeholder="OCI customer session"
-                          aria-describedby="session-title-message"
-                          required
-                        />
-                        <div class="session-field-assistance">
-                          <p
-                            id="session-title-message"
-                            class="field-message"
-                            aria-live="polite"
-                            hidden
-                          ></p>
-                          <span class="required-message">Required</span>
-                        </div>
-                        <div class="controls">
-                          <button
-                            id="start-button"
-                            class="btn btn--primary primary"
-                            type="button"
-                          >
-                            Start session
-                          </button>
-                          <button
-                            id="stop-button"
-                            class="btn btn--secondary"
-                            type="button"
-                            disabled
-                          >
-                            End session
-                          </button>
-                        </div>
-                      </section>
-
-                      <div class="session-feedback">
-                        <section class="status-panel" aria-live="polite">
-                          <div class="status-line">
-                            <span id="status-badge" data-state="idle">idle</span>
-                            <p id="status-message">Ready to start a live session.</p>
-                          </div>
-                        </section>
-
-                        <section
-                          id="microphone-monitor"
-                          class="microphone-monitor"
-                          data-state="idle"
-                          aria-labelledby="microphone-label"
-                        >
-                          <span class="microphone-icon" aria-hidden="true">
-                            <svg viewBox="0 0 24 24" focusable="false">
-                              <path
-                                d="M12 15.25a3.75 3.75 0 0 0 3.75-3.75v-5a3.75 3.75 0 0 0-7.5 0v5A3.75 3.75 0 0 0 12 15.25Zm-6.25-4a6.25 6.25 0 0 0 12.5 0M12 17.5v3.25m-3 0h6"
-                              />
-                            </svg>
-                          </span>
-                          <div class="microphone-copy">
-                            <strong id="microphone-label">Microphone ready</strong>
-                            <span id="microphone-message">
-                              Start a session to check the audio input.
-                            </span>
-                          </div>
-                          <div
-                            id="microphone-level"
-                            class="microphone-level"
-                            role="meter"
-                            aria-label="Microphone input level"
-                            aria-valuemin="0"
-                            aria-valuemax="100"
-                            aria-valuenow="0"
-                          >
-                            <span></span><span></span><span></span><span></span>
-                            <span></span><span></span><span></span><span></span>
-                            <span></span><span></span><span></span><span></span>
-                          </div>
-                        </section>
-                      </div>
-                    </aside>
-
-                    <div class="live-item-overview__content">
-                      <section
-                        class="caption-stage"
-                        aria-labelledby="french-caption-heading"
-                      >
-                        <div class="caption-stage-heading">
-                          <div>
-                            <span class="live-marker">Live</span>
-                            <h2 id="french-caption-heading">French captions</h2>
-                          </div>
-                          <span class="caption-language" lang="fr">Français</span>
-                        </div>
-                        <p
-                          id="current-french-caption"
-                          class="current-french-caption waiting-caption"
-                          lang="fr"
-                          aria-live="polite"
-                          aria-atomic="true"
-                        >
-                          La traduction française apparaîtra ici.
-                        </p>
-                      </section>
-
-                      <section
-                        id="translation-alerts"
-                        class="message-stack"
-                        aria-label="Translation notices"
-                        aria-live="polite"
-                      ></section>
-
-                      <section
-                        class="history-panel"
-                        aria-labelledby="french-history-heading"
-                      >
-                        <div class="history-heading">
-                          <div>
-                            <p class="section-kicker">Session so far</p>
-                            <h2 id="french-history-heading">French transcript</h2>
-                          </div>
-                          <span class="buffer-note">Updated throughout the session</span>
-                        </div>
-                        <div
-                          id="translation-list"
-                          class="result-list french-history"
-                        >
-                          <p id="empty-translation" class="empty-state">
-                            The complete French transcript will build here as the speaker talks.
-                          </p>
-                        </div>
-                      </section>
-
-                      <details class="source-panel">
-                        <summary>
-                          <span>
-                            <strong>English source</strong>
-                            <small>Available for reference</small>
-                          </span>
-                          <span class="disclosure-label">
-                            <span class="when-closed">Show transcript</span>
-                            <span class="when-open">Hide transcript</span>
-                          </span>
-                        </summary>
-                        <div
-                          id="transcript-list"
-                          class="result-list source-transcript"
-                          aria-live="polite"
-                        >
-                          <p id="empty-transcript" class="empty-state">
-                            The English source transcript will appear here.
-                          </p>
-                        </div>
-                      </details>
+                  <section id="role-entry" class="role-entry" aria-labelledby="role-entry-heading">
+                    <div class="role-entry__heading">
+                      <span class="section-accent" aria-hidden="true"></span>
+                      <h2 id="role-entry-heading">How are you joining?</h2>
+                      <p>Choose the view for this device.</p>
                     </div>
-                  </div>
+                    <div class="role-options">
+                      <button id="host-mode-button" class="role-option" type="button">
+                        <span class="role-option__eyebrow">Dedicated microphone device</span>
+                        <strong>Host the session</strong>
+                        <span>Capture the speaker’s audio and follow the English transcript.</span>
+                      </button>
+                      <button id="listener-mode-button" class="role-option" type="button">
+                        <span class="role-option__eyebrow">Client view</span>
+                        <strong>Join as a listener</strong>
+                        <span>Enter the session code and follow the French captions.</span>
+                      </button>
+                    </div>
+                  </section>
+
+                  <section id="host-workspace" class="role-workspace" aria-label="Host session" hidden>
+                    <div class="live-item-overview">
+                      <aside class="session-command-center" aria-labelledby="session-details-heading">
+                        <div class="session-card-heading session-card-heading--with-action">
+                          <h3 id="session-details-heading">Host session</h3>
+                          <button id="host-back-button" class="text-action" type="button">Change role</button>
+                        </div>
+                        <section class="session-controls" aria-label="Host controls">
+                          <label for="session-title">Session name</label>
+                          <input id="session-title" type="text" maxlength="120" placeholder="Customer enablement session" aria-describedby="session-title-message" required />
+                          <div class="session-field-assistance">
+                            <p id="session-title-message" class="field-message" aria-live="polite" hidden></p>
+                            <span class="required-message">Required</span>
+                          </div>
+                          <div class="controls">
+                            <button id="start-button" class="btn btn--primary primary" type="button">Start session</button>
+                            <button id="stop-button" class="btn btn--secondary" type="button" disabled>End session</button>
+                          </div>
+                        </section>
+                        <div class="session-feedback">
+                          <section class="status-panel" aria-live="polite">
+                            <div class="status-line">
+                              <span id="status-badge" data-state="idle">idle</span>
+                              <p id="status-message">Ready to start a live session.</p>
+                            </div>
+                          </section>
+                          <section id="microphone-monitor" class="microphone-monitor" data-state="idle" aria-labelledby="microphone-label">
+                            <span class="microphone-icon" aria-hidden="true">
+                              <svg viewBox="0 0 24 24" focusable="false"><path d="M12 15.25a3.75 3.75 0 0 0 3.75-3.75v-5a3.75 3.75 0 0 0-7.5 0v5A3.75 3.75 0 0 0 12 15.25Zm-6.25-4a6.25 6.25 0 0 0 12.5 0M12 17.5v3.25m-3 0h6" /></svg>
+                            </span>
+                            <div class="microphone-copy">
+                              <strong id="microphone-label">Microphone ready</strong>
+                              <span id="microphone-message">Start a session to check the audio input.</span>
+                            </div>
+                            <div id="microphone-level" class="microphone-level" role="meter" aria-label="Microphone input level" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                              <span></span><span></span><span></span><span></span><span></span><span></span>
+                              <span></span><span></span><span></span><span></span><span></span><span></span>
+                            </div>
+                          </section>
+                          <section id="host-share-panel" class="share-panel" hidden>
+                            <span>Listener code</span>
+                            <strong id="host-join-code">—</strong>
+                            <button id="copy-join-code" class="btn btn--secondary btn--block" type="button">Copy code</button>
+                            <p><span id="host-listener-count">0</span> listeners connected</p>
+                          </section>
+                        </div>
+                      </aside>
+                      <div class="live-item-overview__content">
+                        <section class="caption-stage" aria-labelledby="english-caption-heading">
+                          <div class="caption-stage-heading">
+                            <div><span class="live-marker">Host</span><h2 id="english-caption-heading">English transcript</h2></div>
+                            <span class="caption-language">English</span>
+                          </div>
+                          <p id="current-english-caption" class="current-caption waiting-caption" aria-live="polite" aria-atomic="true">The latest English sentence will appear here.</p>
+                        </section>
+                        <section id="host-alerts" class="message-stack" aria-label="Host notices" aria-live="polite"></section>
+                        <section class="history-panel" aria-labelledby="english-history-heading">
+                          <div class="history-heading">
+                            <div><p class="section-kicker">Session so far</p><h2 id="english-history-heading">English transcript</h2></div>
+                            <span class="buffer-note">Updated as the speaker talks</span>
+                          </div>
+                          <div id="transcript-list" class="result-list source-transcript">
+                            <p id="empty-transcript" class="empty-state">The English transcript will build here.</p>
+                          </div>
+                        </section>
+                      </div>
+                    </div>
+                  </section>
+
+                  <section id="listener-join" class="listener-join" aria-labelledby="listener-join-heading" hidden>
+                    <div class="listener-join__card">
+                      <button id="listener-back-button" class="text-action" type="button">Change role</button>
+                      <span class="section-accent" aria-hidden="true"></span>
+                      <h2 id="listener-join-heading">Join the live session</h2>
+                      <p>Ask the host for the six-character listener code.</p>
+                      <label for="listener-code">Session code</label>
+                      <input id="listener-code" class="join-code-input" type="text" inputmode="text" autocomplete="off" maxlength="7" placeholder="ABC-123" aria-describedby="listener-code-message" />
+                      <p id="listener-code-message" class="field-message" aria-live="polite" hidden></p>
+                      <button id="join-listener-button" class="btn btn--primary btn--block" type="button">Join session</button>
+                    </div>
+                  </section>
+
+                  <section id="listener-workspace" class="role-workspace" aria-label="Listener session" hidden>
+                    <div class="live-item-overview">
+                      <aside class="session-command-center" aria-labelledby="listener-session-heading">
+                        <div class="session-card-heading session-card-heading--with-action">
+                          <h3 id="listener-session-heading">Listener session</h3>
+                          <button id="leave-listener-button" class="text-action" type="button">Leave</button>
+                        </div>
+                        <dl class="listener-session-details">
+                          <div><dt>Session</dt><dd id="listener-session-title">Connecting…</dd></div>
+                          <div><dt>Code</dt><dd id="listener-session-code">—</dd></div>
+                        </dl>
+                        <div class="session-feedback">
+                          <section class="status-panel" aria-live="polite">
+                            <div class="status-line">
+                              <span id="listener-status-badge" data-state="connecting">connecting</span>
+                              <p id="listener-status-message">Joining the live session…</p>
+                            </div>
+                          </section>
+                          <section id="speaker-monitor" class="microphone-monitor" data-state="connecting" aria-labelledby="speaker-monitor-label">
+                            <span class="microphone-icon" aria-hidden="true">
+                              <svg viewBox="0 0 24 24" focusable="false"><path d="M12 15.25a3.75 3.75 0 0 0 3.75-3.75v-5a3.75 3.75 0 0 0-7.5 0v5A3.75 3.75 0 0 0 12 15.25Zm-6.25-4a6.25 6.25 0 0 0 12.5 0M12 17.5v3.25m-3 0h6" /></svg>
+                            </span>
+                            <div class="microphone-copy"><strong id="speaker-monitor-label">Speaker microphone</strong><span id="speaker-monitor-message">Waiting for the host audio level.</span></div>
+                            <div id="speaker-level" class="microphone-level" role="meter" aria-label="Speaker microphone level" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                              <span></span><span></span><span></span><span></span><span></span><span></span>
+                              <span></span><span></span><span></span><span></span><span></span><span></span>
+                            </div>
+                          </section>
+                        </div>
+                      </aside>
+                      <div class="live-item-overview__content">
+                        <section class="caption-stage" aria-labelledby="french-caption-heading">
+                          <div class="caption-stage-heading">
+                            <div><span class="live-marker">Live</span><h2 id="french-caption-heading">French captions</h2></div>
+                            <span class="caption-language" lang="fr">Français</span>
+                          </div>
+                          <p id="current-french-caption" class="current-caption waiting-caption" lang="fr" aria-live="polite" aria-atomic="true">La traduction française apparaîtra ici.</p>
+                        </section>
+                        <section id="translation-alerts" class="message-stack" aria-label="Translation notices" aria-live="polite"></section>
+                        <section class="history-panel" aria-labelledby="french-history-heading">
+                          <div class="history-heading">
+                            <div><p class="section-kicker">Session so far</p><h2 id="french-history-heading">French transcript</h2></div>
+                            <span class="buffer-note">Restored from the beginning when you rejoin</span>
+                          </div>
+                          <div id="translation-list" class="result-list french-history">
+                            <p id="empty-translation" class="empty-state">The complete French transcript will build here.</p>
+                          </div>
+                        </section>
+                      </div>
+                    </div>
+                  </section>
                 </section>
               </section>
 
@@ -389,7 +377,7 @@
             role="tab"
             aria-selected="true"
             aria-controls="live-session-panel"
-            aria-label="Live session"
+            aria-label="Home"
             data-panel="live-session-panel"
           >
             <span class="app-nav__indicator" aria-hidden="true"></span>
@@ -405,7 +393,7 @@
                 />
               </svg>
             </span>
-            <span class="app-nav__label">Live session</span>
+            <span class="app-nav__label">Home</span>
           </button>
           <button
             id="session-archives-tab"

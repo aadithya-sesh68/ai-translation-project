@@ -78,9 +78,12 @@ curl -i --max-time 5 http://127.0.0.1:8010/health
 curl -i --max-time 10 https://venus.aisandbox.ugbu.oraclepdemos.com/OraTranslate/health
 ```
 
-Finally, use a browser that trusts the HTTPS certificate to validate microphone
-permission, live English transcription, French translation, End session, MP3
-playback, text downloads, refresh persistence, and saved-session deletion.
+Finally, use two Chrome windows or two devices that trust the HTTPS certificate.
+Validate that the host alone receives microphone permission and English text,
+the public code joins the listener to French captions, listener refresh restores
+the French transcript, host refresh can reconnect inside the recovery window,
+a second host is rejected, and **End session** produces the MP3, transcripts,
+report, downloads, and deletable archive.
 
 ## Future Supervisor activation
 
