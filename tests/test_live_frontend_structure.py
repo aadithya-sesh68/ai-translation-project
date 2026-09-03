@@ -194,7 +194,24 @@ class LiveFrontendStructureTest(unittest.TestCase):
         self.assertNotIn("window.confirm", script)
         self.assertNotIn("window.alert", script)
 
-    def test_saved_session_report_is_downloadable(self) -> None:
+    def test_saved_session_report_remains_internal(self) -> None:
+        html = (PROJECT_ROOT / "web" / "index.html").read_text(
+            encoding="utf-8"
+        )
+        script = (PROJECT_ROOT / "web" / "app.js").read_text(
+            encoding="utf-8"
+        )
+        session_store = (PROJECT_ROOT / "session_store.py").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertNotIn('id="download-report"', html)
+        self.assertNotIn("Download session report", html)
+        self.assertNotIn("downloadReport", script)
+        self.assertIn('result["report_url"]', session_store)
+        self.assertIn('"session_report.json"', session_store)
+
+    def test_saved_session_actions_follow_the_archive_header(self) -> None:
         html = (PROJECT_ROOT / "web" / "index.html").read_text(
             encoding="utf-8"
         )
@@ -202,8 +219,18 @@ class LiveFrontendStructureTest(unittest.TestCase):
             encoding="utf-8"
         )
 
-        self.assertIn('id="download-report"', html)
-        self.assertIn("session.report_url", script)
+        viewer = html.split('id="session-viewer"', 1)[1].split("</article>", 1)[0]
+        title_position = viewer.index('id="saved-session-title"')
+        status_position = viewer.index('id="saved-session-status"')
+        delete_position = viewer.index('id="delete-session"')
+        audio_position = viewer.index('id="saved-audio-panel"')
+
+        self.assertLess(title_position, status_position)
+        self.assertLess(delete_position, audio_position)
+        self.assertEqual(3, viewer.count('class="btn btn--secondary download-action"'))
+        self.assertEqual(3, viewer.count('aria-hidden="true" focusable="false"'))
+        self.assertIn("function formatSessionStatus(value)", script)
+        self.assertIn("formatSessionStatus(session.status)", script)
 
     def test_browser_tabs_coordinate_the_single_live_session(self) -> None:
         script = (PROJECT_ROOT / "web" / "app.js").read_text(
@@ -243,9 +270,36 @@ class LiveFrontendStructureTest(unittest.TestCase):
         self.assertIn("validateSessionTitleForStart()", script)
         self.assertIn('applicationPath("/api/sessions")', script)
         self.assertIn("SESSION_TITLE_CONFLICT_MESSAGE", script)
-        self.assertIn('connectLiveSocket({ type: "start", title })', script)
+        self.assertIn('connectLiveSocket({ type: "prepare", title })', script)
         self.assertIn('case "session_snapshot":', script)
         self.assertNotIn('setHostStatus("error"', title_validation)
+
+    def test_waiting_room_precedes_microphone_and_live_activation(self) -> None:
+        html = (PROJECT_ROOT / "web" / "index.html").read_text(
+            encoding="utf-8"
+        )
+        script = (PROJECT_ROOT / "web" / "app.js").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn(">Prepare session</button>", html)
+        self.assertIn('id="host-share-panel"', html)
+        self.assertIn('id="start-without-listener-dialog"', html)
+        self.assertIn("No listener is connected yet.", html)
+        self.assertIn('case "session_prepared":', script)
+        self.assertIn('hostSessionState = "prepared";\n      sessionStarting = false;\n      updateHostListenerCount(0);', script)
+        self.assertIn('connectLiveSocket({ type: "prepare", title })', script)
+        self.assertIn('socket.send(JSON.stringify({ type: "activate" }))', script)
+        self.assertIn('socket.send(JSON.stringify({ type: "cancel" }))', script)
+        self.assertLess(
+            script.index("await acquireMicrophone();", script.index("async function activatePreparedSession")),
+            script.index('socket.send(JSON.stringify({ type: "activate" }))'),
+        )
+        prepare_flow = script.split("if (ownsHostLease || socket) return;", 1)[1].split(
+            "async function activatePreparedSession()", 1
+        )[0]
+        self.assertNotIn("acquireMicrophone", prepare_flow)
+        self.assertIn('listenerLiveMarker.textContent = "Waiting"', script)
 
     def test_live_controls_use_an_item_overview_left_card(self) -> None:
         html = (PROJECT_ROOT / "web" / "index.html").read_text(
@@ -322,6 +376,93 @@ class LiveFrontendStructureTest(unittest.TestCase):
         self.assertIn("event.english_segments", script)
         self.assertIn("event.french_segments", script)
         self.assertIn("scheduleListenerReconnect", script)
+
+    def test_closed_host_tab_can_offer_server_validated_recovery(self) -> None:
+        html = (PROJECT_ROOT / "web" / "index.html").read_text(
+            encoding="utf-8"
+        )
+        script = (PROJECT_ROOT / "web" / "app.js").read_text(
+            encoding="utf-8"
+        )
+
+        role_entry = html.split('id="role-entry"', 1)[1].split(">", 1)[0]
+        restore_role = script.split("async function restoreRole()", 1)[1].split(
+            "hostModeButton.addEventListener", 1
+        )[0]
+
+        self.assertIn("hidden", role_entry)
+        self.assertIn(
+            "key === HOST_SESSION_KEY ? localStorage : sessionStorage",
+            script,
+        )
+        self.assertLess(
+            restore_role.index("readSessionValue(LISTENER_SESSION_KEY)"),
+            restore_role.index("readSessionValue(HOST_SESSION_KEY)"),
+        )
+        self.assertIn("await fetchLiveSessionStatus()", restore_role)
+        self.assertIn("status.session_id === host.session_id", restore_role)
+        self.assertIn("!status.host_connected", restore_role)
+        self.assertIn("showStoredHostRecovery(host", restore_role)
+        self.assertIn('storedHost.state !== "prepared"', script)
+        self.assertIn('event.code !== "LIVE_SESSION_ACTIVE"', script)
+
+    def test_listener_leave_restores_the_join_action(self) -> None:
+        script = (PROJECT_ROOT / "web" / "app.js").read_text(
+            encoding="utf-8"
+        )
+
+        show_join = script.split("function showListenerJoin()", 1)[1].split(
+            "function showListenerWorkspace()", 1
+        )[0]
+        leave_listener = script.split("function leaveListenerSession()", 1)[1].split(
+            "function liveSessionInProgress()", 1
+        )[0]
+
+        self.assertIn("joinListenerButton.disabled = false;", show_join)
+        self.assertIn("showListenerJoin();", leave_listener)
+        self.assertIn(
+            'event.key === "Enter" && !joinListenerButton.disabled',
+            script,
+        )
+
+    def test_invalid_listener_code_uses_inline_error_styling(self) -> None:
+        html = (PROJECT_ROOT / "web" / "index.html").read_text(
+            encoding="utf-8"
+        )
+        styles = (PROJECT_ROOT / "web" / "styles.css").read_text(
+            encoding="utf-8"
+        )
+        script = (PROJECT_ROOT / "web" / "app.js").read_text(
+            encoding="utf-8"
+        )
+
+        message = html.split('id="listener-code-message"', 1)[1].split(">", 1)[0]
+        self.assertIn('role="alert"', message)
+        self.assertIn('aria-atomic="true"', message)
+        self.assertIn('.listener-join__card > .field-message {', styles)
+        self.assertIn('color: var(--rds-color-danger-text);', styles)
+        self.assertNotIn('.listener-join__card > .field-message::before', styles)
+        self.assertIn('.join-code-input[aria-invalid="true"]', styles)
+        self.assertIn('listenerCodeInput.toggleAttribute("aria-invalid"', script)
+
+    def test_saved_transcripts_scroll_independently(self) -> None:
+        html = (PROJECT_ROOT / "web" / "index.html").read_text(
+            encoding="utf-8"
+        )
+        styles = (PROJECT_ROOT / "web" / "styles.css").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertEqual(2, html.count('class="saved-transcript-scroll"'))
+        self.assertEqual(2, html.count('role="region"'))
+        self.assertIn('aria-labelledby="saved-english-heading"', html)
+        self.assertIn('aria-labelledby="saved-french-heading"', html)
+        self.assertEqual(2, html.count('tabindex="0"', html.index('id="session-detail"')))
+        scroll_rule = styles.split(".saved-transcript-scroll {", 1)[1].split("}", 1)[0]
+        self.assertIn("max-height: var(--result-list-max-height);", scroll_rule)
+        self.assertIn("overflow-y: auto;", scroll_rule)
+        self.assertIn("overscroll-behavior: contain;", scroll_rule)
+        self.assertIn("scrollbar-gutter: stable;", scroll_rule)
 
     def test_listener_surface_has_no_microphone_or_session_controls(self) -> None:
         html = (PROJECT_ROOT / "web" / "index.html").read_text(

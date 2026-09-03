@@ -58,7 +58,7 @@
                 tabindex="0"
               >
                 <section class="overview-section live-workflow" aria-label="Live session">
-                  <section id="role-entry" class="role-entry" aria-labelledby="role-entry-heading">
+                  <section id="role-entry" class="role-entry" aria-labelledby="role-entry-heading" hidden>
                     <div class="role-entry__heading">
                       <span class="section-accent" aria-hidden="true"></span>
                       <h2 id="role-entry-heading">How are you joining?</h2>
@@ -93,15 +93,15 @@
                             <span class="required-message">Required</span>
                           </div>
                           <div class="controls">
-                            <button id="start-button" class="btn btn--primary primary" type="button">Start session</button>
-                            <button id="stop-button" class="btn btn--secondary" type="button" disabled>End session</button>
+                            <button id="start-button" class="btn btn--primary primary" type="button">Prepare session</button>
+                            <button id="stop-button" class="btn btn--secondary" type="button" disabled hidden>Cancel session</button>
                           </div>
                         </section>
                         <div class="session-feedback">
                           <section class="status-panel" aria-live="polite">
                             <div class="status-line">
                               <span id="status-badge" data-state="idle">idle</span>
-                              <p id="status-message">Ready to start a live session.</p>
+                              <p id="status-message">Ready to prepare a session.</p>
                             </div>
                           </section>
                           <section id="microphone-monitor" class="microphone-monitor" data-state="idle" aria-labelledby="microphone-label">
@@ -110,7 +110,7 @@
                             </span>
                             <div class="microphone-copy">
                               <strong id="microphone-label">Microphone ready</strong>
-                              <span id="microphone-message">Start a session to check the audio input.</span>
+                              <span id="microphone-message">The microphone stays off until you start live.</span>
                             </div>
                             <div id="microphone-level" class="microphone-level" role="meter" aria-label="Microphone input level" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
                               <span></span><span></span><span></span><span></span><span></span><span></span>
@@ -121,7 +121,7 @@
                             <span>Listener code</span>
                             <strong id="host-join-code">—</strong>
                             <button id="copy-join-code" class="btn btn--secondary btn--block" type="button">Copy code</button>
-                            <p><span id="host-listener-count">0</span> listeners connected</p>
+                            <p id="host-listener-message"><span id="host-listener-count">0</span> listeners connected</p>
                           </section>
                         </div>
                       </aside>
@@ -148,7 +148,7 @@
                       <p>Ask the host for the six-character listener code.</p>
                       <label for="listener-code">Session code</label>
                       <input id="listener-code" class="join-code-input" type="text" inputmode="text" autocomplete="off" maxlength="7" placeholder="ABC-123" aria-describedby="listener-code-message" />
-                      <p id="listener-code-message" class="field-message" aria-live="polite" hidden></p>
+                      <p id="listener-code-message" class="field-message" role="alert" aria-live="polite" aria-atomic="true" hidden></p>
                       <button id="join-listener-button" class="btn btn--primary btn--block" type="button">Join session</button>
                     </div>
                   </section>
@@ -186,7 +186,7 @@
                       <div class="live-item-overview__content">
                         <section class="caption-stage" aria-labelledby="french-caption-heading">
                           <div class="caption-stage-heading">
-                            <div><span class="live-marker">Live</span><h2 id="french-caption-heading">French captions</h2></div>
+                            <div><span id="listener-live-marker" class="live-marker" data-state="waiting">Waiting</span><h2 id="french-caption-heading">French captions</h2></div>
                             <span class="caption-language" lang="fr">Français</span>
                           </div>
                           <p id="current-french-caption" class="current-caption waiting-caption" lang="fr" aria-live="polite" aria-atomic="true">La traduction française apparaîtra ici.</p>
@@ -223,9 +223,9 @@
                   <div class="library-heading section-heading">
                     <div>
                       <h2 id="library-heading">Saved sessions</h2>
-                      <p>
-                        Review recordings, transcripts, translations, and operational reports.
-                      </p>
+                        <p>
+                          Review recordings, transcripts, and translations.
+                        </p>
                     </div>
                     <button
                       id="refresh-sessions"
@@ -255,14 +255,23 @@
                       </p>
                       <div id="session-detail" hidden>
                         <div class="viewer-heading">
-                          <div>
-                            <span
-                              id="saved-session-status"
-                              class="saved-status"
-                            ></span>
-                            <h3 id="saved-session-title"></h3>
+                          <div class="viewer-identity">
+                            <div class="viewer-title-row">
+                              <h3 id="saved-session-title"></h3>
+                              <span
+                                id="saved-session-status"
+                                class="saved-status"
+                              ></span>
+                            </div>
                             <p id="saved-session-meta"></p>
                           </div>
+                          <button
+                            id="delete-session"
+                            class="btn btn--danger danger-action"
+                            type="button"
+                          >
+                            Delete saved session
+                          </button>
                         </div>
 
                         <div id="saved-audio-panel" class="saved-audio">
@@ -277,18 +286,19 @@
                           </p>
                         </div>
 
-                        <div class="download-links">
-                          <a id="download-audio" download>Download MP3</a>
-                          <a id="download-english" download>Download English text</a>
-                          <a id="download-french" download>Download French text</a>
-                          <a id="download-report" download>Download session report</a>
-                          <button
-                            id="delete-session"
-                            class="btn btn--danger danger-action"
-                            type="button"
-                          >
-                            Delete saved session
-                          </button>
+                        <div class="download-actions" aria-label="Session downloads">
+                          <a id="download-audio" class="btn btn--secondary download-action" download>
+                            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 3.75v11.5m-4-4 4 4 4-4M5 19.25h14" /></svg>
+                            <span>Download MP3</span>
+                          </a>
+                          <a id="download-english" class="btn btn--secondary download-action" download>
+                            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 3.75v11.5m-4-4 4 4 4-4M5 19.25h14" /></svg>
+                            <span>Download English text</span>
+                          </a>
+                          <a id="download-french" class="btn btn--secondary download-action" download>
+                            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 3.75v11.5m-4-4 4 4 4-4M5 19.25h14" /></svg>
+                            <span>Download French text</span>
+                          </a>
                         </div>
 
                         <section
@@ -296,14 +306,27 @@
                           aria-labelledby="saved-english-heading"
                         >
                           <h4 id="saved-english-heading">English transcript</h4>
-                          <p id="saved-english"></p>
+                          <p
+                            id="saved-english"
+                            class="saved-transcript-scroll"
+                            role="region"
+                            aria-labelledby="saved-english-heading"
+                            tabindex="0"
+                          ></p>
                         </section>
                         <section
                           class="saved-text french-saved"
                           aria-labelledby="saved-french-heading"
                         >
                           <h4 id="saved-french-heading">French translation</h4>
-                          <p id="saved-french" lang="fr"></p>
+                          <p
+                            id="saved-french"
+                            class="saved-transcript-scroll"
+                            role="region"
+                            aria-labelledby="saved-french-heading"
+                            lang="fr"
+                            tabindex="0"
+                          ></p>
                         </section>
                       </div>
                     </article>
@@ -323,6 +346,41 @@
         </div>
       </main>
     </div>
+
+    <dialog
+      id="start-without-listener-dialog"
+      class="rdw-dialog"
+      aria-labelledby="start-without-listener-title"
+      aria-describedby="start-without-listener-description"
+    >
+      <div class="rdw-dialog__surface">
+        <header class="rdw-dialog__header">
+          <h2 id="start-without-listener-title">Start without the listener?</h2>
+        </header>
+        <div class="rdw-dialog__body">
+          <p id="start-without-listener-description">
+            No listener is connected yet. Recording and OCI processing will
+            begin immediately.
+          </p>
+        </div>
+        <footer class="rdw-dialog__footer">
+          <button
+            id="cancel-start-without-listener"
+            class="btn btn--secondary"
+            type="button"
+          >
+            Keep waiting
+          </button>
+          <button
+            id="confirm-start-without-listener"
+            class="btn btn--primary"
+            type="button"
+          >
+            Start anyway
+          </button>
+        </footer>
+      </div>
+    </dialog>
 
     <dialog
       id="delete-session-dialog"

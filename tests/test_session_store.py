@@ -7,6 +7,7 @@ import json
 import math
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -124,6 +125,21 @@ class SessionStoreTest(unittest.TestCase):
         self.assertEqual("SESSION_TITLE_CONFLICT", context.exception.code)
         self.assertEqual(SESSION_TITLE_CONFLICT_MESSAGE, str(context.exception))
         self.assertEqual(1, len(list_sessions(self.root)))
+
+    def test_archive_can_use_prepared_session_identity_at_activation(self) -> None:
+        session_id = "20260903T090000Z-abcdef12"
+        started_at = datetime(2026, 9, 3, 9, 15, tzinfo=timezone.utc)
+
+        archive = SessionArchive(
+            "Prepared session",
+            self.root,
+            session_id=session_id,
+            started_at=started_at,
+        )
+        metadata = archive.finalize("completed")
+
+        self.assertEqual(session_id, metadata["session_id"])
+        self.assertEqual("2026-09-03T09:15:00Z", metadata["started_at"])
 
     def test_session_list_api_returns_public_urls(self) -> None:
         metadata = self.create_saved_session()

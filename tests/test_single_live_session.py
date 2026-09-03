@@ -20,7 +20,7 @@ from speech_web_server import process_http_request
 
 
 class FakeArchive:
-    def __init__(self, title: str):
+    def __init__(self, title: str, *, session_id=None, started_at=None):
         if not str(title or "").strip():
             from session_store import SessionTitleValidationError
 
@@ -28,7 +28,8 @@ class FakeArchive:
                 "SESSION_TITLE_REQUIRED",
                 "Enter a session name.",
             )
-        self.session_id = "20260902T120000Z-1234abcd"
+        self.session_id = session_id or "20260902T120000Z-1234abcd"
+        self.started_at = started_at
         self.title = str(title).strip()
         self.events: list[dict[str, object]] = []
         self.audio: list[bytes] = []
@@ -95,7 +96,9 @@ def manager(**overrides) -> LiveSessionManager:
         "archive_factory": FakeArchive,
         "settings_factory": lambda: SimpleNamespace(),
         "session_factory": FakeOciSession,
+        "title_validator": lambda title: str(title).strip(),
         "reconnect_grace_seconds": 0.05,
+        "prepared_timeout_seconds": 1,
         "audio_queue_size": 2,
         "outbound_queue_size": 16,
     }
@@ -114,12 +117,128 @@ def drain(subscriber) -> list[dict[str, object]]:
 
 
 class LiveSessionManagerTest(unittest.IsolatedAsyncioTestCase):
+    async def test_prepare_creates_waiting_room_without_archive_or_oci(self) -> None:
+        archives: list[FakeArchive] = []
+        oci_sessions: list[FakeOciSession] = []
+
+        def archive_factory(title: str, **kwargs) -> FakeArchive:
+            archive = FakeArchive(title, **kwargs)
+            archives.append(archive)
+            return archive
+
+        def session_factory(*args, **kwargs) -> FakeOciSession:
+            session = FakeOciSession(*args, **kwargs)
+            oci_sessions.append(session)
+            return session
+
+        coordinator = manager(
+            archive_factory=archive_factory,
+            session_factory=session_factory,
+        )
+        host = coordinator.subscriber("host")
+        waiting = await coordinator.prepare_host("Prepared session", host)
+
+        self.assertEqual("prepared", waiting.state)
+        self.assertIsNone(waiting.archive)
+        self.assertIsNone(waiting.audio_queue)
+        self.assertIsNone(waiting.oci_session)
+        self.assertEqual([], archives)
+        self.assertEqual([], oci_sessions)
+        prepared = next(
+            event
+            for event in drain(host)
+            if event["type"] == "session_prepared"
+        )
+        self.assertEqual(waiting.join_code, prepared["join_code"])
+
+        listener = coordinator.subscriber("listener")
+        await coordinator.join_listener(waiting.join_code, listener)
+        snapshot = next(
+            event
+            for event in drain(listener)
+            if event["type"] == "session_snapshot"
+        )
+        self.assertEqual("prepared", snapshot["session"]["state"])
+
+        await coordinator.cancel_prepared(host.subscriber_id)
+        ended = next(
+            event
+            for event in drain(listener)
+            if event["type"] == "session_ended"
+        )
+        self.assertFalse(ended["archived"])
+        self.assertEqual([], archives)
+        self.assertFalse(coordinator.active)
+
+    async def test_activation_creates_archive_and_oci_resources(self) -> None:
+        coordinator = manager()
+        host = coordinator.subscriber("host")
+        live = await coordinator.prepare_host("Activation", host)
+
+        await coordinator.activate_host(host.subscriber_id)
+
+        self.assertEqual("live", live.state)
+        self.assertIsNotNone(live.archive)
+        self.assertIsNotNone(live.audio_queue)
+        self.assertIsInstance(live.oci_session, FakeOciSession)
+        await live.finalize("completed")
+
+    async def test_prepared_waiting_room_expires_without_archive(self) -> None:
+        archives: list[FakeArchive] = []
+
+        def archive_factory(title: str, **kwargs) -> FakeArchive:
+            archive = FakeArchive(title, **kwargs)
+            archives.append(archive)
+            return archive
+
+        coordinator = manager(
+            archive_factory=archive_factory,
+            prepared_timeout_seconds=0.01,
+        )
+        host = coordinator.subscriber("host")
+        await coordinator.prepare_host("Expiring room", host)
+        await asyncio.sleep(0.04)
+
+        self.assertFalse(coordinator.active)
+        self.assertEqual([], archives)
+        ended = next(
+            event
+            for event in drain(host)
+            if event["type"] == "session_ended"
+        )
+        self.assertEqual("expired", ended["reason"])
+        self.assertFalse(ended["archived"])
+
+    async def test_prepared_host_refresh_restores_waiting_room(self) -> None:
+        coordinator = manager()
+        first_host = coordinator.subscriber("host")
+        waiting = await coordinator.prepare_host("Refresh waiting", first_host)
+        await coordinator.disconnect(first_host)
+
+        replacement = coordinator.subscriber("host")
+        resumed = await coordinator.resume_host(
+            waiting.session_id,
+            waiting.host_token,
+            replacement,
+        )
+        snapshot = next(
+            event
+            for event in drain(replacement)
+            if event["type"] == "session_snapshot"
+        )
+
+        self.assertIs(waiting, resumed)
+        self.assertEqual("prepared", resumed.state)
+        self.assertEqual("prepared", snapshot["session"]["state"])
+        self.assertIsNone(resumed.archive)
+        await coordinator.cancel_prepared(replacement.subscriber_id)
+
     async def test_host_creates_one_logical_session_and_listener_joins(self) -> None:
         coordinator = manager()
         host = coordinator.subscriber("host")
         live = await coordinator.start_host("Customer session", host)
         host_events = drain(host)
-        created = next(event for event in host_events if event["type"] == "session_created")
+        created = next(event for event in host_events if event["type"] == "session_prepared")
 
         self.assertTrue(coordinator.active)
         self.assertEqual(live.session_id, created["session_id"])
@@ -247,8 +366,8 @@ class LiveSessionManagerTest(unittest.IsolatedAsyncioTestCase):
     async def test_session_factory_failure_releases_slot_and_archive(self) -> None:
         archives: list[FakeArchive] = []
 
-        def archive_factory(title: str) -> FakeArchive:
-            archive = FakeArchive(title)
+        def archive_factory(title: str, **kwargs) -> FakeArchive:
+            archive = FakeArchive(title, **kwargs)
             archives.append(archive)
             return archive
 
@@ -296,6 +415,7 @@ class LiveSessionManagerTest(unittest.IsolatedAsyncioTestCase):
             payload = json.loads(response.body)
             self.assertTrue(payload["active"])
             self.assertEqual("live", payload["state"])
+            self.assertEqual("live", payload["resume_state"])
             self.assertTrue(payload["host_connected"])
             await live.finalize("completed")
 

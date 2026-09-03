@@ -19,10 +19,12 @@ python speech_web_server.py
 
 Then open <http://localhost:8765> in Edge or Chrome. On the dedicated speaker
 device, choose **Host the session**, enter a required unique session name,
-select **Start session**, and allow microphone access. Share the generated
-six-character listener code. On the client device, choose **Join as a
-listener**, enter that code, and follow the French captions. The host selects
-**End session** to flush the final segment and save the outputs.
+select **Prepare session**, and share the generated six-character listener
+code. On the client device, choose **Join as a listener** and enter that code.
+When the listener is ready, the host selects **Start live session** and allows
+microphone access. The host selects **End session** to flush the final segment
+and save the outputs. Preparing or cancelling a waiting room creates no
+recording and initializes no OCI client.
 
 Both roles can be tested locally by opening the application in two Chrome
 windows. Only the host window requests microphone access; the listener window
@@ -35,6 +37,7 @@ The defaults match this prototype:
 - OCI region: `us-phoenix-1` (or the profile's region)
 - Translation grouping window: 1.5 seconds
 - Host browser reconnect window: 60 seconds
+- Prepared waiting-room timeout: 30 minutes
 - Bounded translation, audio, and per-browser event queues
 - Web server: `127.0.0.1:8765`
 
@@ -50,6 +53,7 @@ $env:TRANSLATION_QUEUE_MAX_ITEMS = '120'
 $env:AUDIO_QUEUE_MAX_CHUNKS = '64'
 $env:CLIENT_EVENT_QUEUE_MAX_ITEMS = '128'
 $env:HOST_RECONNECT_GRACE_SECONDS = '60'
+$env:PREPARED_SESSION_TIMEOUT_SECONDS = '1800'
 $env:ORATRANSLATE_LOG_LEVEL = 'INFO'
 $env:SPEECH_WEB_PORT = '8765'
 $env:SPEECH_WEB_ALLOWED_ORIGINS = 'http://localhost:8080,https://speech.customer.example'
@@ -111,24 +115,28 @@ connection isn't yet implemented.
 ## Request flow
 
 1. The entry view asks whether the device is the session host or a listener.
-2. The host browser requests microphone permission only after **Start
-   session** and receives a private resume token plus a public listener code.
-3. A listener joins with the public code and never requests microphone access.
-4. An AudioWorklet resamples the host browser's native audio rate to 16 kHz PCM.
-5. Binary PCM chunks travel over the host's same-origin `/ws/live` WebSocket
+2. **Prepare session** creates a server-owned waiting room, private host resume
+   token, and public listener code without creating an archive or OCI clients.
+3. A listener joins with the public code and waits without requesting
+   microphone access.
+4. **Start live session** requests host microphone permission and atomically
+   initializes the archive, bounded audio queue, OCI signers, Speech session,
+   and Language client.
+5. An AudioWorklet resamples the host browser's native audio rate to 16 kHz PCM.
+6. Binary PCM chunks travel over the host's same-origin `/ws/live` WebSocket
    and pass through a bounded server audio queue.
-6. The server opens one OCI Speech session and one OCI Language client per
+7. The server opens one OCI Speech session and one OCI Language client per
    logical live session, not per listener or translated sentence.
-7. Final English segments appear on the host and are grouped briefly for OCI
+8. Final English segments appear on the host and are grouped briefly for OCI
    Language translation.
-8. French results are published to listener browser queues. Server snapshots
+9. French results are published to listener browser queues. Server snapshots
    restore the appropriate complete transcript when either role reconnects.
-9. **End session** flushes remaining audio, requests the final Speech result,
+10. **End session** flushes remaining audio, requests the final Speech result,
    and completes queued translations.
-10. The server closes the MP3 recording and saves English, French, metadata,
+11. The server closes the MP3 recording and saves English, French, metadata,
    safe OCI error details, and an operational session report in a
    session-specific folder.
-11. The **Session Archives** tab refreshes automatically so the completed
+12. The **Session Archives** tab refreshes automatically so the completed
    session can be played and its text outputs reviewed or downloaded without
    crowding the primary **Live Session** view.
 
@@ -139,11 +147,12 @@ future French events. The server remains authoritative even if browser-side
 coordination is bypassed. Archive browsing remains available in every tab.
 
 The logical session is owned by the server rather than by one WebSocket. A host
-refresh pauses capture and starts a configurable reconnect grace period; the
-same tab can reacquire the microphone and resume with its private token. If the
-host doesn't return, the server finalizes the session as `interrupted`. A
-listener refresh automatically rejoins with its saved code and receives the
-French transcript from the beginning.
+refresh or accidental host-tab closure pauses capture and starts a configurable
+reconnect grace period. Reopening the app in the same browser offers
+**Reconnect microphone** and resumes the existing server session with its
+private token. If the host doesn't return, the server finalizes the session as
+`interrupted`. A listener refresh automatically rejoins with its saved code and
+receives the French transcript from the beginning.
 
 Completed outputs persist on the server under `recorded_sessions` by default:
 

@@ -15,14 +15,21 @@ from oci_speech_service import (
     SpeechTranslationSession,
     safe_error_details,
 )
-from session_store import SessionArchive, public_session
+from session_store import (
+    SessionArchive,
+    create_session_id,
+    public_session,
+    utc_now,
+    validate_new_session_title,
+)
 
 
 BrowserRole = Literal["host", "listener"]
 Event = dict[str, Any]
 SessionFactory = Callable[..., SpeechTranslationSession]
-ArchiveFactory = Callable[[str], SessionArchive]
+ArchiveFactory = Callable[..., SessionArchive]
 SettingsFactory = Callable[[], OciSpeechSettings]
+TitleValidator = Callable[[Any], str]
 
 LIVE_SESSION_ACTIVE_MESSAGE = "Another OraTranslate session is already active."
 INVALID_JOIN_CODE_MESSAGE = "The session code is invalid or has expired."
@@ -63,17 +70,19 @@ class ManagedLiveSession:
     def __init__(
         self,
         manager: "LiveSessionManager",
-        archive: SessionArchive,
+        session_id: str,
+        title: str,
         host: BrowserSubscriber,
         audio_queue_size: int,
     ) -> None:
         self.manager = manager
-        self.archive = archive
-        self.session_id = archive.session_id
-        self.title = archive.title
+        self.archive: SessionArchive | None = None
+        self.session_id = session_id
+        self.title = title
         self.join_code = _join_code()
         self.host_token = secrets.token_urlsafe(32)
-        self.state = "connecting"
+        self.state = "prepared"
+        self.resume_state = "prepared"
         self.sequence = 0
         self.host_subscriber_id: str | None = host.subscriber_id
         self.subscribers: dict[str, BrowserSubscriber] = {
@@ -86,11 +95,11 @@ class ManagedLiveSession:
         self.latest_audio_level = 0
         self.speech_ready = False
         self.oci_session: SpeechTranslationSession | None = None
-        self.audio_queue: asyncio.Queue[bytes | None] = asyncio.Queue(
-            maxsize=audio_queue_size
-        )
+        self.audio_queue_size = audio_queue_size
+        self.audio_queue: asyncio.Queue[bytes | None] | None = None
         self.audio_worker_task: asyncio.Task[None] | None = None
         self.reconnect_task: asyncio.Task[None] | None = None
+        self.prepared_expiry_task: asyncio.Task[None] | None = None
         self.finalize_task: asyncio.Task[dict[str, Any] | None] | None = None
         self._finalize_lock = asyncio.Lock()
 
@@ -115,6 +124,7 @@ class ManagedLiveSession:
                 "session_id": self.session_id,
                 "title": self.title,
                 "state": self.state,
+                "resume_state": self.resume_state,
                 "listener_count": self.listener_count,
                 "host_connected": self.host_connected,
             },
@@ -160,7 +170,7 @@ class ManagedLiveSession:
         self.sequence += 1
         sequenced = dict(event)
         sequenced["sequence"] = self.sequence
-        if record:
+        if record and self.archive:
             self.archive.record_event(sequenced)
         self.send_to_role(sequenced, roles or {"host", "listener"})
         return sequenced
@@ -186,6 +196,7 @@ class ManagedLiveSession:
             self.speech_ready = True
             if self.host_connected:
                 self.state = "live"
+                self.resume_state = "live"
             roles = {"host", "listener"}
         elif event_type == "error":
             roles = {"host", "listener"}
@@ -194,6 +205,8 @@ class ManagedLiveSession:
         self.publish(event, roles=roles, record=True)
 
     async def audio_worker(self) -> None:
+        if not self.audio_queue or not self.archive:
+            return
         while True:
             chunk = await self.audio_queue.get()
             try:
@@ -214,6 +227,11 @@ class ManagedLiveSession:
                 "HOST_LEASE_REQUIRED",
                 "Only the connected host can send microphone audio.",
             )
+        if self.state != "live" or not self.audio_queue:
+            raise LiveSessionError(
+                "SESSION_NOT_LIVE",
+                "The live session has not started yet.",
+            )
         try:
             await asyncio.wait_for(self.audio_queue.put(chunk), timeout=1.0)
         except TimeoutError as error:
@@ -230,7 +248,10 @@ class ManagedLiveSession:
             ) from error
 
     def publish_audio_level(self, subscriber_id: str, value: Any) -> None:
-        if subscriber_id != self.host_subscriber_id:
+        if (
+            subscriber_id != self.host_subscriber_id
+            or self.state != "live"
+        ):
             return
         try:
             level = max(0, min(100, round(float(value))))
@@ -246,6 +267,11 @@ class ManagedLiveSession:
         async with self._finalize_lock:
             if self.state == "ended":
                 return None
+            if not self.archive or not self.audio_queue:
+                raise LiveSessionError(
+                    "SESSION_NOT_LIVE",
+                    "The live session has not started yet.",
+                )
             self.state = "finalizing"
             self.publish(
                 {
@@ -260,6 +286,12 @@ class ManagedLiveSession:
                 and not self.reconnect_task.done()
             ):
                 self.reconnect_task.cancel()
+            if (
+                self.prepared_expiry_task
+                and self.prepared_expiry_task is not asyncio.current_task()
+                and not self.prepared_expiry_task.done()
+            ):
+                self.prepared_expiry_task.cancel()
 
             await self.audio_queue.put(None)
             await self.audio_queue.join()
@@ -293,6 +325,7 @@ class ManagedLiveSession:
                 {
                     "type": "session_ended",
                     "state": "ended",
+                    "archived": saved_session is not None,
                     "message": (
                         "Session ended and outputs were saved."
                         if saved_session
@@ -315,6 +348,43 @@ class ManagedLiveSession:
             await self.manager.session_finished(self)
             return saved_session
 
+    async def close_without_archive(self, reason: str, message: str) -> None:
+        """Close a prepared waiting room without writing archive files."""
+
+        async with self._finalize_lock:
+            if self.state == "ended":
+                return
+            self.state = "ended"
+            for task in (self.reconnect_task, self.prepared_expiry_task):
+                if (
+                    task
+                    and task is not asyncio.current_task()
+                    and not task.done()
+                ):
+                    task.cancel()
+            self.publish(
+                {
+                    "type": "session_ended",
+                    "state": "ended",
+                    "reason": reason,
+                    "archived": False,
+                    "message": message,
+                    "session": None,
+                }
+            )
+            for subscriber in tuple(self.subscribers.values()):
+                try:
+                    subscriber.queue.put_nowait(None)
+                except asyncio.QueueFull:
+                    while True:
+                        try:
+                            subscriber.queue.get_nowait()
+                            subscriber.queue.task_done()
+                        except asyncio.QueueEmpty:
+                            break
+                    subscriber.queue.put_nowait(None)
+            await self.manager.session_finished(self)
+
 
 class LiveSessionManager:
     """Own the single live session and all host/listener browser leases."""
@@ -325,17 +395,27 @@ class LiveSessionManager:
         archive_factory: ArchiveFactory = SessionArchive,
         settings_factory: SettingsFactory = OciSpeechSettings.from_environment,
         session_factory: SessionFactory = SpeechTranslationSession,
+        title_validator: TitleValidator = validate_new_session_title,
         reconnect_grace_seconds: float | None = None,
+        prepared_timeout_seconds: float | None = None,
         audio_queue_size: int | None = None,
         outbound_queue_size: int | None = None,
     ) -> None:
         self.archive_factory = archive_factory
         self.settings_factory = settings_factory
         self.session_factory = session_factory
+        self.title_validator = title_validator
         self.reconnect_grace_seconds = (
             reconnect_grace_seconds
             if reconnect_grace_seconds is not None
             else float(os.environ.get("HOST_RECONNECT_GRACE_SECONDS", "60"))
+        )
+        self.prepared_timeout_seconds = (
+            prepared_timeout_seconds
+            if prepared_timeout_seconds is not None
+            else float(
+                os.environ.get("PREPARED_SESSION_TIMEOUT_SECONDS", "1800")
+            )
         )
         self.audio_queue_size = (
             audio_queue_size
@@ -368,6 +448,7 @@ class LiveSessionManager:
             "title": current.title,
             "host_connected": current.host_connected,
             "listener_count": current.listener_count,
+            "resume_state": current.resume_state,
         }
 
     def subscriber(self, role: BrowserRole) -> BrowserSubscriber:
@@ -376,7 +457,7 @@ class LiveSessionManager:
             queue=asyncio.Queue(maxsize=self.outbound_queue_size),
         )
 
-    async def start_host(
+    async def prepare_host(
         self,
         title: Any,
         subscriber: BrowserSubscriber,
@@ -387,51 +468,88 @@ class LiveSessionManager:
                     "LIVE_SESSION_ACTIVE",
                     LIVE_SESSION_ACTIVE_MESSAGE,
                 )
-            settings = self.settings_factory()
-            archive = self.archive_factory(title)
+            prepared_at = utc_now()
+            validated_title = self.title_validator(title)
             managed = ManagedLiveSession(
                 self,
-                archive,
+                create_session_id(prepared_at),
+                validated_title,
                 subscriber,
                 self.audio_queue_size,
             )
             self.current = managed
-            try:
-                managed.oci_session = self.session_factory(
-                    settings,
-                    managed.accept_oci_event,
-                    session_id=managed.session_id,
-                )
-                managed.send_to(
-                    subscriber,
-                    {
-                        "type": "session_created",
-                        "session_id": managed.session_id,
-                        "title": managed.title,
-                        "join_code": managed.join_code,
-                        "resume_token": managed.host_token,
-                    },
-                )
-                managed.publish(
-                    {
-                        "type": "session_status",
-                        "state": "connecting",
-                        "message": "Connecting to OCI Speech Realtime...",
-                    },
-                    record=True,
-                )
-                managed.audio_worker_task = asyncio.create_task(
-                    managed.audio_worker()
-                )
-            except Exception:
-                self.current = None
-                archive.finalize("failed")
-                raise
+            managed.send_to(
+                subscriber,
+                {
+                    "type": "session_prepared",
+                    "session_id": managed.session_id,
+                    "title": managed.title,
+                    "join_code": managed.join_code,
+                    "resume_token": managed.host_token,
+                },
+            )
+            managed.publish(
+                {
+                    "type": "session_status",
+                    "state": "prepared",
+                    "message": "Share the code, then start when the listener is ready.",
+                }
+            )
+            managed.prepared_expiry_task = asyncio.create_task(
+                self._expire_prepared_session(managed)
+            )
+            return managed
+
+    async def activate_host(self, subscriber_id: str) -> ManagedLiveSession:
+        """Start recording and OCI services for a prepared session."""
+
+        managed = self.current
+        if not managed or subscriber_id != managed.host_subscriber_id:
+            raise LiveSessionError(
+                "HOST_LEASE_REQUIRED",
+                "Only the connected host can start this session.",
+            )
+        if managed.state != "prepared":
+            raise LiveSessionError(
+                "SESSION_NOT_PREPARED",
+                "This session is not waiting to be started.",
+            )
+
+        if managed.prepared_expiry_task and not managed.prepared_expiry_task.done():
+            managed.prepared_expiry_task.cancel()
+        managed.state = "connecting"
+        managed.resume_state = "connecting"
 
         try:
+            settings = self.settings_factory()
+            managed.archive = self.archive_factory(
+                managed.title,
+                session_id=managed.session_id,
+                started_at=utc_now(),
+            )
+            managed.publish(
+                {
+                    "type": "session_status",
+                    "state": "connecting",
+                    "message": "Connecting to OCI Speech Realtime...",
+                },
+                record=True,
+            )
+            managed.audio_queue = asyncio.Queue(
+                maxsize=managed.audio_queue_size
+            )
+            managed.audio_worker_task = asyncio.create_task(
+                managed.audio_worker()
+            )
+            managed.oci_session = self.session_factory(
+                settings,
+                managed.accept_oci_event,
+                session_id=managed.session_id,
+            )
             await managed.oci_session.start()
-            if managed.host_connected:
+            if managed.host_connected and managed.state != "host_reconnecting":
                 managed.state = "live"
+                managed.resume_state = "live"
                 managed.publish(
                     {
                         "type": "session_status",
@@ -442,8 +560,24 @@ class LiveSessionManager:
             return managed
         except Exception as error:
             managed.accept_oci_event(safe_error_details(error, "session"))
-            await managed.finalize("failed")
+            if managed.archive and managed.audio_queue:
+                await managed.finalize("failed")
+            else:
+                await managed.close_without_archive(
+                    "activation_failed",
+                    "The live session could not be started. No recording was created.",
+                )
             raise
+
+    async def start_host(
+        self,
+        title: Any,
+        subscriber: BrowserSubscriber,
+    ) -> ManagedLiveSession:
+        """Backward-compatible helper that prepares and immediately activates."""
+
+        managed = await self.prepare_host(title, subscriber)
+        return await self.activate_host(subscriber.subscriber_id)
 
     async def resume_host(
         self,
@@ -474,16 +608,25 @@ class LiveSessionManager:
             current.reconnect_task.cancel()
         current.subscribers[subscriber.subscriber_id] = subscriber
         current.host_subscriber_id = subscriber.subscriber_id
-        current.state = "live" if current.speech_ready else "connecting"
+        current.state = (
+            "prepared"
+            if current.resume_state == "prepared"
+            else ("live" if current.speech_ready else "connecting")
+        )
+        current.resume_state = current.state
         current.send_to(subscriber, current.snapshot("host", reason="resumed"))
         current.publish(
             {
                 "type": "session_status",
                 "state": current.state,
                 "message": (
-                    "The host reconnected. Live captions have resumed."
-                    if current.speech_ready
-                    else "The host reconnected. Speech is still connecting."
+                    "The waiting room is ready. Share the code, then start when the listener is ready."
+                    if current.state == "prepared"
+                    else (
+                        "The host reconnected. Live captions have resumed."
+                        if current.speech_ready
+                        else "The host reconnected. Speech is still connecting."
+                    )
                 ),
             }
         )
@@ -499,6 +642,7 @@ class LiveSessionManager:
             not current
             or normalize_join_code(join_code) != current.join_code
             or current.state not in {
+                "prepared",
                 "connecting",
                 "live",
                 "host_reconnecting",
@@ -536,14 +680,26 @@ class LiveSessionManager:
         if current.host_subscriber_id != subscriber.subscriber_id:
             return
         current.host_subscriber_id = None
-        if current.state not in {"connecting", "live", "host_reconnecting"}:
+        if current.state not in {
+            "prepared",
+            "connecting",
+            "live",
+            "host_reconnecting",
+        }:
             return
+        if current.state != "host_reconnecting":
+            current.resume_state = current.state
         current.state = "host_reconnecting"
         current.publish(
             {
                 "type": "session_status",
                 "state": "host_reconnecting",
-                "message": "Speaker reconnecting. Captions are temporarily paused.",
+                "resume_state": current.resume_state,
+                "message": (
+                    "Host reconnecting. The waiting room remains open."
+                    if current.resume_state == "prepared"
+                    else "Speaker reconnecting. Captions are temporarily paused."
+                ),
                 "grace_seconds": self.reconnect_grace_seconds,
             },
             roles={"listener"},
@@ -560,9 +716,56 @@ class LiveSessionManager:
                 and not managed.host_connected
                 and managed.state == "host_reconnecting"
             ):
-                await managed.finalize("interrupted")
+                if managed.archive:
+                    await managed.finalize("interrupted")
+                else:
+                    await managed.close_without_archive(
+                        "host_disconnected",
+                        "The host did not reconnect. No recording was created.",
+                    )
         except asyncio.CancelledError:
             pass
+
+    async def _expire_prepared_session(
+        self,
+        managed: ManagedLiveSession,
+    ) -> None:
+        try:
+            await asyncio.sleep(self.prepared_timeout_seconds)
+            if (
+                self.current is managed
+                and not managed.archive
+                and (
+                    managed.state == "prepared"
+                    or (
+                        managed.state == "host_reconnecting"
+                        and managed.resume_state == "prepared"
+                    )
+                )
+            ):
+                await managed.close_without_archive(
+                    "expired",
+                    "The waiting room expired. No recording was created.",
+                )
+        except asyncio.CancelledError:
+            pass
+
+    async def cancel_prepared(self, subscriber_id: str) -> None:
+        current = self.current
+        if not current or subscriber_id != current.host_subscriber_id:
+            raise LiveSessionError(
+                "HOST_LEASE_REQUIRED",
+                "Only the connected host can cancel this waiting room.",
+            )
+        if current.state != "prepared" or current.archive:
+            raise LiveSessionError(
+                "SESSION_NOT_PREPARED",
+                "Only a waiting session can be cancelled.",
+            )
+        await current.close_without_archive(
+            "cancelled",
+            "The host cancelled the waiting room. No recording was created.",
+        )
 
     async def stop_host(self, subscriber_id: str) -> dict[str, Any] | None:
         current = self.current
@@ -570,6 +773,11 @@ class LiveSessionManager:
             raise LiveSessionError(
                 "HOST_LEASE_REQUIRED",
                 "Only the connected host can end this session.",
+            )
+        if current.state not in {"connecting", "live"} or not current.archive:
+            raise LiveSessionError(
+                "SESSION_NOT_LIVE",
+                "The live session has not started yet.",
             )
         if current.finalize_task is None:
             current.finalize_task = asyncio.create_task(

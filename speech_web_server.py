@@ -332,16 +332,16 @@ async def handle_live_session(websocket: ServerConnection) -> None:
             send_events(websocket, subscriber.queue)
         )
 
-        if command_type == "start":
-            managed = await LIVE_SESSION_MANAGER.start_host(
+        if command_type == "prepare":
+            managed = await LIVE_SESSION_MANAGER.prepare_host(
                 command.get("title"),
                 subscriber,
             )
             log_event(
                 LOGGER,
                 logging.INFO,
-                "live_session_created",
-                "Server-owned live session created",
+                "live_session_prepared",
+                "Server-owned waiting room prepared",
                 session_id=managed.session_id,
                 role="host",
             )
@@ -396,6 +396,29 @@ async def handle_live_session(websocket: ServerConnection) -> None:
             if not isinstance(browser_command, dict):
                 continue
             if (
+                browser_command.get("type") == "activate"
+                and subscriber.role == "host"
+            ):
+                await LIVE_SESSION_MANAGER.activate_host(
+                    subscriber.subscriber_id
+                )
+                log_event(
+                    LOGGER,
+                    logging.INFO,
+                    "live_session_activated",
+                    "Prepared session started recording and OCI services",
+                    session_id=managed.session_id,
+                    role="host",
+                )
+            elif (
+                browser_command.get("type") == "cancel"
+                and subscriber.role == "host"
+            ):
+                await LIVE_SESSION_MANAGER.cancel_prepared(
+                    subscriber.subscriber_id
+                )
+                break
+            elif (
                 browser_command.get("type") == "audio_level"
                 and subscriber.role == "host"
             ):

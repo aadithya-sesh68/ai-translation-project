@@ -148,9 +148,20 @@ def _latency_summary(values: list[float]) -> dict[str, int | float | None]:
 class SessionArchive:
     """Write one microphone stream and its OCI results to a session folder."""
 
-    def __init__(self, title: str = "Live session", root: Path | None = None):
-        self.started_at = utc_now()
-        self.session_id = create_session_id(self.started_at)
+    def __init__(
+        self,
+        title: str = "Live session",
+        root: Path | None = None,
+        *,
+        session_id: str | None = None,
+        started_at: datetime | None = None,
+    ):
+        self.started_at = started_at or utc_now()
+        self.session_id = (
+            validate_session_id(session_id)
+            if session_id is not None
+            else create_session_id(self.started_at)
+        )
         self.root = (root or session_storage_root()).resolve()
         self.title = validate_new_session_title(title, self.root)
         self.directory = self.root / self.session_id
