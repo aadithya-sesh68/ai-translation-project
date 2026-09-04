@@ -245,7 +245,7 @@ class LiveFrontendStructureTest(unittest.TestCase):
             script,
         )
 
-    def test_session_name_is_required_unique_and_restored(self) -> None:
+    def test_host_uses_the_selected_slot_without_a_manual_session_name(self) -> None:
         html = (PROJECT_ROOT / "web" / "index.html").read_text(
             encoding="utf-8"
         )
@@ -253,26 +253,15 @@ class LiveFrontendStructureTest(unittest.TestCase):
             encoding="utf-8"
         )
 
-        title_input = html.split('id="session-title"', 1)[1].split("/>", 1)[0]
-        title_input_position = html.index('id="session-title"')
-        assistance_position = html.index('class="session-field-assistance"')
-        required_position = html.index('class="required-message"')
-        title_validation = script.split(
-            "async function validateSessionTitleForStart()", 1
-        )[1].split("function activateView", 1)[0]
-
-        self.assertIn("required", title_input)
-        self.assertIn('aria-describedby="session-title-message"', title_input)
-        self.assertIn('id="session-title-message"', html)
-        self.assertLess(title_input_position, assistance_position)
-        self.assertLess(assistance_position, required_position)
-        self.assertNotIn('class="session-field-label"', html)
-        self.assertIn("validateSessionTitleForStart()", script)
-        self.assertIn('applicationPath("/api/sessions")', script)
-        self.assertIn("SESSION_TITLE_CONFLICT_MESSAGE", script)
-        self.assertIn('connectLiveSocket({ type: "prepare", title })', script)
+        self.assertNotIn('id="session-title"', html)
+        self.assertNotIn('id="session-title-message"', html)
+        self.assertNotIn("validateSessionTitleForStart", script)
+        self.assertNotIn("SESSION_TITLE_CONFLICT_MESSAGE", script)
+        self.assertIn(
+            'connectLiveSocket({ type: "prepare", session_code: selectedHostSessionCode })',
+            script,
+        )
         self.assertIn('case "session_snapshot":', script)
-        self.assertNotIn('setHostStatus("error"', title_validation)
 
     def test_waiting_room_precedes_microphone_and_live_activation(self) -> None:
         html = (PROJECT_ROOT / "web" / "index.html").read_text(
@@ -283,12 +272,16 @@ class LiveFrontendStructureTest(unittest.TestCase):
         )
 
         self.assertIn(">Prepare session</button>", html)
-        self.assertIn('id="host-share-panel"', html)
+        self.assertNotIn('id="host-share-panel"', html)
+        self.assertNotIn('id="copy-join-code"', html)
         self.assertIn('id="start-without-listener-dialog"', html)
         self.assertIn("No listener is connected yet.", html)
         self.assertIn('case "session_prepared":', script)
         self.assertIn('hostSessionState = "prepared";\n      sessionStarting = false;\n      updateHostListenerCount(0);', script)
-        self.assertIn('connectLiveSocket({ type: "prepare", title })', script)
+        self.assertIn(
+            'connectLiveSocket({ type: "prepare", session_code: selectedHostSessionCode })',
+            script,
+        )
         self.assertIn('socket.send(JSON.stringify({ type: "activate" }))', script)
         self.assertIn('socket.send(JSON.stringify({ type: "cancel" }))', script)
         self.assertLess(
@@ -305,6 +298,12 @@ class LiveFrontendStructureTest(unittest.TestCase):
         html = (PROJECT_ROOT / "web" / "index.html").read_text(
             encoding="utf-8"
         )
+        script = (PROJECT_ROOT / "web" / "app.js").read_text(
+            encoding="utf-8"
+        )
+        styles = (PROJECT_ROOT / "web" / "styles.css").read_text(
+            encoding="utf-8"
+        )
         host_surface = html.split('id="host-workspace"', 1)[1].split(
             'id="listener-join"', 1
         )[0]
@@ -312,9 +311,13 @@ class LiveFrontendStructureTest(unittest.TestCase):
         command_center = host_surface.split(
             'class="session-command-center"', 1
         )[1].split('class="live-item-overview__content"', 1)[0]
+        content = host_surface.split(
+            'class="live-item-overview__content"', 1
+        )[1]
 
         controls_position = command_center.index('class="session-controls"')
         status_position = command_center.index('class="status-panel"')
+        listener_position = command_center.index('id="host-listener-message"')
         microphone_position = command_center.index('id="microphone-monitor"')
         content_position = host_surface.index('class="live-item-overview__content"')
         transcript_position = host_surface.index(
@@ -324,12 +327,28 @@ class LiveFrontendStructureTest(unittest.TestCase):
         self.assertGreater(overview_position, 0)
         self.assertIn('<aside class="session-command-center"', host_surface)
         self.assertIn('id="session-details-heading"', command_center)
+        self.assertIn('<label for="host-session-code">', command_center)
+        self.assertNotIn("Event session", command_center)
+        self.assertNotIn("Reusable code", command_center)
+        self.assertGreater(controls_position, 0)
+        self.assertIn('class="status-panel"', command_center)
+        self.assertIn('id="microphone-monitor"', command_center)
         self.assertLess(controls_position, status_position)
         self.assertLess(status_position, microphone_position)
+        self.assertLess(microphone_position, listener_position)
         self.assertLess(overview_position, content_position)
         self.assertLess(content_position, transcript_position)
-        self.assertIn('class="session-feedback"', command_center)
+        self.assertNotIn('class="live-session-operations"', host_surface)
         self.assertIn('role="meter"', command_center)
+        self.assertIn('id="host-listener-label"', command_center)
+        self.assertIn("hostListenerLabel.textContent", script)
+        schedule_label_rule = styles.split(".schedule-summary label {", 1)[1].split(
+            "}", 1
+        )[0]
+        select_rule = styles.split("select.join-code-input {", 1)[1].split("}", 1)[0]
+        self.assertIn("font-size: var(--rds-font-size-sm);", schedule_label_rule)
+        self.assertIn("font-size: var(--rds-font-size-md);", select_rule)
+        self.assertIn("font-weight: 400;", select_rule)
         self.assertIn(
             'aria-label="Microphone input level"', command_center
         )
@@ -418,7 +437,14 @@ class LiveFrontendStructureTest(unittest.TestCase):
             "function liveSessionInProgress()", 1
         )[0]
 
-        self.assertIn("joinListenerButton.disabled = false;", show_join)
+        self.assertIn(
+            "setListenerCodeInputsDisabled(false);",
+            show_join,
+        )
+        self.assertIn(
+            "joinListenerButton.disabled = false;",
+            show_join,
+        )
         self.assertIn("showListenerJoin();", leave_listener)
         self.assertIn(
             'event.key === "Enter" && !joinListenerButton.disabled',
@@ -442,8 +468,8 @@ class LiveFrontendStructureTest(unittest.TestCase):
         self.assertIn('.listener-join__card > .field-message {', styles)
         self.assertIn('color: var(--rds-color-danger-text);', styles)
         self.assertNotIn('.listener-join__card > .field-message::before', styles)
-        self.assertIn('.join-code-input[aria-invalid="true"]', styles)
-        self.assertIn('listenerCodeInput.toggleAttribute("aria-invalid"', script)
+        self.assertIn('.join-code-entry[aria-invalid="true"]', styles)
+        self.assertIn('listenerCodeEntry.toggleAttribute("aria-invalid"', script)
 
     def test_saved_transcripts_scroll_independently(self) -> None:
         html = (PROJECT_ROOT / "web" / "index.html").read_text(
@@ -477,6 +503,79 @@ class LiveFrontendStructureTest(unittest.TestCase):
         self.assertNotIn('id="start-button"', listener_surface)
         self.assertNotIn('id="stop-button"', listener_surface)
         self.assertNotIn('id="microphone-monitor"', listener_surface)
+
+    def test_reusable_event_codes_are_selected_and_server_authoritative(self) -> None:
+        html = (PROJECT_ROOT / "web" / "index.html").read_text(
+            encoding="utf-8"
+        )
+        script = (PROJECT_ROOT / "web" / "app.js").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('<select id="host-session-code"', html)
+        self.assertIn('id="listener-code"', html)
+        self.assertEqual(6, html.count('class="join-code-character"'))
+        self.assertIn('class="join-code-segment join-code-segment--period"', html)
+        self.assertIn('data-code-index="5"', html)
+        self.assertIn('id="listener-code-guidance"', html)
+        self.assertIn('aria-describedby="listener-code-guidance listener-code-message"', html)
+        self.assertIn("Enter the code for the session you want to join.", html)
+        self.assertLess(
+            html.index('id="listener-code-guidance"'),
+            html.index('id="listener-code-label"'),
+        )
+        self.assertIn(
+            "September 15: <strong>DAY1-AM</strong> or "
+            "<strong>DAY1-PM</strong>",
+            html,
+        )
+        self.assertIn(
+            "September 16: <strong>DAY2-AM</strong> or "
+            "<strong>DAY2-PM</strong>",
+            html,
+        )
+        self.assertIn('function listenerCodeValue()', script)
+        self.assertIn(
+            'setListenerCodeError("Enter one of the event codes shown above.");',
+            script,
+        )
+        self.assertNotIn(
+            "Enter DAY1-AM, DAY1-PM, DAY2-AM, or DAY2-PM.",
+            script,
+        )
+        self.assertIn('input.addEventListener("paste"', script)
+        self.assertIn('setListenerCodeValue(characters);', script)
+        self.assertIn('applicationPath("/api/session-slots")', script)
+        self.assertIn('selectedHostSessionCode', script)
+        self.assertIn('function formatHostSessionOption(slot)', script)
+        self.assertIn('`${slot.code} · ${dateLabel}`', script)
+        self.assertIn('hostSessionCodeInput.addEventListener("change"', script)
+        self.assertIn(
+            'setListenerStatus("host_ready", "The host is connected.',
+            script,
+        )
+        self.assertIn('/^DAY[12]-(AM|PM)$/.test(joinCode)', script)
+        self.assertNotIn("SESSION_STATUS_REFRESH_MILLISECONDS", script)
+        self.assertNotIn('case "session_waiting":', script)
+        self.assertNotIn('id="host-session-slots"', html)
+        self.assertIn('session_code: selectedHostSessionCode', script)
+
+    def test_ending_a_live_slot_requires_explicit_confirmation(self) -> None:
+        html = (PROJECT_ROOT / "web" / "index.html").read_text(
+            encoding="utf-8"
+        )
+        script = (PROJECT_ROOT / "web" / "app.js").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('id="end-session-dialog"', html)
+        self.assertIn('id="confirm-end-session"', html)
+        self.assertIn("endSessionDialog.showModal();", script)
+        self.assertIn("async function confirmEndHostSession()", script)
+        self.assertIn('type: "stop"', script)
+        self.assertIn("The event code remains", html)
+        self.assertIn("available if another run is needed.", html)
+        self.assertIn("The event code remains available", script)
 
 
 if __name__ == "__main__":

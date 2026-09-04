@@ -16,11 +16,20 @@ from live_session_manager import (
     LiveSessionError,
     LiveSessionManager,
 )
+from session_schedule import SessionCodeCatalog
 from speech_web_server import process_http_request
 
 
 class FakeArchive:
-    def __init__(self, title: str, *, session_id=None, started_at=None):
+    def __init__(
+        self,
+        title: str,
+        *,
+        session_id=None,
+        started_at=None,
+        session_code=None,
+        session_label=None,
+    ):
         if not str(title or "").strip():
             from session_store import SessionTitleValidationError
 
@@ -31,6 +40,8 @@ class FakeArchive:
         self.session_id = session_id or "20260902T120000Z-1234abcd"
         self.started_at = started_at
         self.title = str(title).strip()
+        self.session_code = session_code
+        self.session_label = session_label
         self.events: list[dict[str, object]] = []
         self.audio: list[bytes] = []
         self.finalize_calls: list[str] = []
@@ -46,6 +57,8 @@ class FakeArchive:
         return {
             "session_id": self.session_id,
             "title": self.title,
+            "session_code": self.session_code,
+            "session_label": self.session_label,
             "status": status,
             "started_at": "2026-09-02T12:00:00Z",
             "ended_at": "2026-09-02T12:01:00Z",
@@ -97,6 +110,7 @@ def manager(**overrides) -> LiveSessionManager:
         "settings_factory": lambda: SimpleNamespace(),
         "session_factory": FakeOciSession,
         "title_validator": lambda title: str(title).strip(),
+        "session_catalog": SessionCodeCatalog(),
         "reconnect_grace_seconds": 0.05,
         "prepared_timeout_seconds": 1,
         "audio_queue_size": 2,
@@ -117,6 +131,95 @@ def drain(subscriber) -> list[dict[str, object]]:
 
 
 class LiveSessionManagerTest(unittest.IsolatedAsyncioTestCase):
+    async def test_catalog_exposes_four_reusable_event_codes(self) -> None:
+        coordinator = manager()
+
+        payload = coordinator.schedule()
+
+        self.assertEqual(
+            ["DAY1-AM", "DAY1-PM", "DAY2-AM", "DAY2-PM"],
+            [slot["code"] for slot in payload["slots"]],
+        )
+        self.assertEqual(
+            ["available", "available", "available", "available"],
+            [slot["status"] for slot in payload["slots"]],
+        )
+        self.assertIsNone(payload["active_code"])
+
+    async def test_listener_joins_only_after_the_matching_host_prepares(self) -> None:
+        coordinator = manager()
+        listener = coordinator.subscriber("listener")
+
+        with self.assertRaises(LiveSessionError) as inactive:
+            await coordinator.join_listener("day1-am", listener)
+        self.assertEqual("SESSION_NOT_ACTIVE", inactive.exception.code)
+
+        host = coordinator.subscriber("host")
+        live = await coordinator.prepare_host(
+            "Morning session",
+            host,
+            "DAY1-AM",
+        )
+        await coordinator.join_listener("DAY1-AM", listener)
+        snapshot = next(event for event in drain(listener) if event["type"] == "session_snapshot")
+        self.assertEqual("DAY1-AM", snapshot["session"]["session_code"])
+        self.assertEqual(1, live.listener_count)
+        await coordinator.cancel_prepared(host.subscriber_id)
+
+    async def test_host_title_is_derived_from_the_selected_schedule_slot(self) -> None:
+        coordinator = manager()
+        host = coordinator.subscriber("host")
+
+        live = await coordinator.prepare_host(None, host, "DAY1-AM")
+
+        self.assertEqual("DAY1-AM — September 15 · Morning", live.title)
+        prepared = next(
+            event
+            for event in drain(host)
+            if event["type"] == "session_prepared"
+        )
+        self.assertEqual("DAY1-AM — September 15 · Morning", prepared["title"])
+        await coordinator.cancel_prepared(host.subscriber_id)
+
+    async def test_completed_code_can_be_reused_for_another_run(self) -> None:
+        coordinator = manager()
+        host = coordinator.subscriber("host")
+        live = await coordinator.start_host("First run", host, "DAY1-AM")
+        await live.finalize("completed")
+
+        retry_host = coordinator.subscriber("host")
+        retry = await coordinator.prepare_host(None, retry_host, "DAY1-AM")
+
+        self.assertEqual("DAY1-AM", retry.session_slot.code)
+        self.assertEqual("DAY1-AM — September 15 · Morning", retry.title)
+        await coordinator.cancel_prepared(retry_host.subscriber_id)
+
+    async def test_listener_wrong_code_reports_the_active_code(self) -> None:
+        coordinator = manager()
+        host = coordinator.subscriber("host")
+        await coordinator.prepare_host(None, host, "DAY1-PM")
+
+        with self.assertRaises(LiveSessionError) as mismatch:
+            await coordinator.join_listener(
+                "DAY1-AM",
+                coordinator.subscriber("listener"),
+            )
+
+        self.assertEqual("SESSION_CODE_MISMATCH", mismatch.exception.code)
+        self.assertIn("DAY1-PM", str(mismatch.exception))
+        await coordinator.cancel_prepared(host.subscriber_id)
+
+    async def test_interrupted_slot_remains_available(self) -> None:
+        coordinator = manager()
+        host = coordinator.subscriber("host")
+        live = await coordinator.start_host("Interrupted", host, "DAY1-AM")
+
+        await live.finalize("interrupted")
+
+        payload = coordinator.schedule()
+        self.assertIsNone(payload["active_code"])
+        self.assertTrue(all(slot["status"] == "available" for slot in payload["slots"]))
+
     async def test_prepare_creates_waiting_room_without_archive_or_oci(self) -> None:
         archives: list[FakeArchive] = []
         oci_sessions: list[FakeOciSession] = []
@@ -418,6 +521,17 @@ class LiveSessionManagerTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual("live", payload["resume_state"])
             self.assertTrue(payload["host_connected"])
             await live.finalize("completed")
+
+    async def test_schedule_endpoint_reports_fixed_slot_state(self) -> None:
+        coordinator = manager()
+        request = Request("/api/session-slots", Headers())
+
+        with patch("speech_web_server.LIVE_SESSION_MANAGER", coordinator):
+            response = process_http_request(SimpleNamespace(), request)
+            payload = json.loads(response.body)
+
+        self.assertIsNone(payload["active_code"])
+        self.assertEqual(4, len(payload["slots"]))
 
 
 if __name__ == "__main__":

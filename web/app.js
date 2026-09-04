@@ -11,8 +11,6 @@ const listenerBackButton = $("#listener-back-button");
 const leaveListenerButton = $("#leave-listener-button");
 const startButton = $("#start-button");
 const stopButton = $("#stop-button");
-const sessionTitleInput = $("#session-title");
-const sessionTitleMessage = $("#session-title-message");
 const statusBadge = $("#status-badge");
 const statusMessage = $("#status-message");
 const microphoneMonitor = $("#microphone-monitor");
@@ -20,15 +18,15 @@ const microphoneLabel = $("#microphone-label");
 const microphoneMessage = $("#microphone-message");
 const microphoneLevel = $("#microphone-level");
 const microphoneBars = [...microphoneLevel.querySelectorAll("span")];
-const hostSharePanel = $("#host-share-panel");
-const hostJoinCode = $("#host-join-code");
-const copyJoinCodeButton = $("#copy-join-code");
 const hostListenerCount = $("#host-listener-count");
 const hostListenerMessage = $("#host-listener-message");
+const hostListenerLabel = $("#host-listener-label");
+const hostSessionCodeInput = $("#host-session-code");
 const transcriptList = $("#transcript-list");
 const emptyTranscript = $("#empty-transcript");
 const hostAlerts = $("#host-alerts");
-const listenerCodeInput = $("#listener-code");
+const listenerCodeEntry = $("#listener-code");
+const listenerCodeInputs = [...listenerCodeEntry.querySelectorAll(".join-code-character")];
 const listenerCodeMessage = $("#listener-code-message");
 const joinListenerButton = $("#join-listener-button");
 const listenerSessionTitle = $("#listener-session-title");
@@ -71,6 +69,10 @@ const viewPanels = [...document.querySelectorAll('[role="tabpanel"]')];
 const startWithoutListenerDialog = $("#start-without-listener-dialog");
 const cancelStartWithoutListenerButton = $("#cancel-start-without-listener");
 const confirmStartWithoutListenerButton = $("#confirm-start-without-listener");
+const endSessionDialog = $("#end-session-dialog");
+const endSessionDialogDescription = $("#end-session-dialog-description");
+const cancelEndSessionButton = $("#cancel-end-session");
+const confirmEndSessionButton = $("#confirm-end-session");
 
 const ACTIVE_VIEW_KEY = "oratranslate-active-view-v1";
 const HOST_SESSION_KEY = "oratranslate-host-session-v2";
@@ -79,8 +81,6 @@ const LIVE_SESSION_CHANNEL_NAME = "oratranslate-live-session-v2";
 const FRENCH_CAPTION_PLACEHOLDER = "La traduction française apparaîtra ici.";
 const AUTO_SCROLL_THRESHOLD = 48;
 const HOST_RESTORE_SETTLE_MILLISECONDS = 750;
-const SESSION_TITLE_CONFLICT_MESSAGE =
-  "A saved session already uses this name. Choose a different name.";
 const { applicationPath, websocketUrl } = window.oraTranslateUrls;
 const tabId = window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`;
 const liveSessionChannel =
@@ -117,6 +117,8 @@ let hostPreparedReconnectTimer = null;
 let listenerReconnectTimer = null;
 let selectedSessionId = null;
 let archivePlaybackClaim = null;
+let scheduleState = null;
+let selectedHostSessionCode = null;
 
 function storageForSessionKey(key) {
   return key === HOST_SESSION_KEY ? localStorage : sessionStorage;
@@ -160,8 +162,10 @@ function showHostWorkspace() {
 function showListenerJoin() {
   currentRole = "listener";
   showLiveSurface(listenerJoin);
+  setListenerCodeInputsDisabled(false);
   joinListenerButton.disabled = false;
-  listenerCodeInput.focus();
+  setListenerCodeError();
+  focusListenerCodeInput();
 }
 
 function showListenerWorkspace() {
@@ -193,56 +197,99 @@ function setSpeakerState(state, label, message) {
   speakerMonitorMessage.textContent = message;
 }
 
-function normalizeSessionTitle(value) {
-  return String(value || "").trim().replace(/\s+/g, " ").slice(0, 120);
-}
-
 function normalizeJoinCode(value) {
-  const raw = String(value || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6);
-  return raw.length > 3 ? `${raw.slice(0, 3)}-${raw.slice(3)}` : raw;
+  const raw = String(value || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const match = raw.match(/^DAY([12])(AM|PM)$/);
+  return match ? `DAY${match[1]}-${match[2]}` : String(value || "").trim().toUpperCase();
 }
 
-function setSessionTitleError(message = "") {
-  sessionTitleInput.setCustomValidity(message);
-  sessionTitleInput.toggleAttribute("aria-invalid", Boolean(message));
-  sessionTitleMessage.textContent = message;
-  sessionTitleMessage.hidden = !message;
+function listenerCodeValue() {
+  return listenerCodeInputs.map((input) => input.value).join("");
+}
+
+function setListenerCodeValue(value) {
+  const characters = String(value || "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "")
+    .slice(0, listenerCodeInputs.length);
+  listenerCodeInputs.forEach((input, index) => {
+    input.value = characters[index] || "";
+  });
+}
+
+function setListenerCodeInputsDisabled(disabled) {
+  listenerCodeInputs.forEach((input) => {
+    input.disabled = disabled;
+  });
+}
+
+function focusListenerCodeInput() {
+  const nextInput = listenerCodeInputs.find((input) => !input.value);
+  (nextInput || listenerCodeInputs.at(-1))?.focus();
 }
 
 function setListenerCodeError(message = "") {
-  listenerCodeInput.setCustomValidity(message);
-  listenerCodeInput.toggleAttribute("aria-invalid", Boolean(message));
+  listenerCodeInputs[0].setCustomValidity(message);
+  listenerCodeEntry.toggleAttribute("aria-invalid", Boolean(message));
+  listenerCodeInputs.forEach((input) => {
+    input.toggleAttribute("aria-invalid", Boolean(message));
+  });
   listenerCodeMessage.textContent = message;
   listenerCodeMessage.hidden = !message;
 }
 
-async function validateSessionTitleForStart() {
-  const title = normalizeSessionTitle(sessionTitleInput.value);
-  sessionTitleInput.value = title;
-  setSessionTitleError();
-  if (!title) {
-    setSessionTitleError("Enter a session name.");
-    sessionTitleInput.focus();
-    return null;
-  }
+function formatHostSessionOption(slot) {
+  const dateLabel = String(slot.label || "")
+    .split(" · ")[0]
+    .replace(/^September /, "Sep ");
+  return dateLabel ? `${slot.code} · ${dateLabel}` : slot.code;
+}
+
+function renderSessionSchedule() {
+  const slots = scheduleState?.slots || [];
+  const activeCode = normalizeJoinCode(scheduleState?.active_code);
+  const slotCodes = slots.map((slot) => slot.code);
+  const previousHostSelection = normalizeJoinCode(
+    hostSessionCodeInput.value || selectedHostSessionCode,
+  );
+  hostSessionCodeInput.replaceChildren();
+  slots.forEach((slot) => {
+    const option = document.createElement("option");
+    option.value = slot.code;
+    option.textContent = formatHostSessionOption(slot);
+    hostSessionCodeInput.append(option);
+  });
+  selectedHostSessionCode = activeCode
+    || (slotCodes.includes(previousHostSelection) ? previousHostSelection : slotCodes[0])
+    || null;
+  hostSessionCodeInput.value = selectedHostSessionCode || "";
+  updateHostControls();
+}
+
+function updateActiveScheduleStatus(state) {
+  if (!scheduleState?.active_code) return;
+  const slot = scheduleState.slots.find(
+    (candidate) => candidate.code === scheduleState.active_code,
+  );
+  if (!slot) return;
+  slot.status = state;
+  renderSessionSchedule();
+}
+
+async function loadSessionSchedule() {
   try {
-    const response = await fetch(applicationPath("/api/sessions"), { cache: "no-store" });
-    if (response.ok) {
-      const payload = await response.json();
-      const titleKey = title.toLocaleLowerCase();
-      const duplicate = (payload.sessions || []).some(
-        (session) => normalizeSessionTitle(session.title).toLocaleLowerCase() === titleKey,
-      );
-      if (duplicate) {
-        setSessionTitleError(SESSION_TITLE_CONFLICT_MESSAGE);
-        sessionTitleInput.focus();
-        return null;
-      }
-    }
-  } catch {
-    // The server performs the authoritative validation.
+    const response = await fetch(applicationPath("/api/session-slots"), { cache: "no-store" });
+    if (!response.ok) throw new Error("Scheduled sessions could not be loaded.");
+    scheduleState = await response.json();
+    renderSessionSchedule();
+  } catch (error) {
+    scheduleState = null;
+    selectedHostSessionCode = null;
+    hostSessionCodeInput.replaceChildren(new Option("Event sessions unavailable", ""));
+    hostSessionCodeInput.disabled = true;
+    setHostStatus("error", error.message);
+    updateHostControls();
   }
-  return title;
 }
 
 function activateView(selectedTab, focusTab = false) {
@@ -285,19 +332,28 @@ function updateHostControls() {
   const sessionOwned = ownsHostLease || resumePending;
   startButton.textContent = resumePending
     ? (hostSessionState === "prepared" ? "Reconnect waiting room" : "Reconnect microphone")
-    : (prepared ? "Start live session" : "Prepare session");
-  startButton.disabled = sessionStarting || stopping || liveOrConnecting || (ownsHostLease && !prepared);
+    : (prepared
+      ? "Start live session"
+      : (selectedHostSessionCode ? "Prepare session" : "Choose a session"));
+  startButton.disabled = sessionStarting
+    || stopping
+    || liveOrConnecting
+    || (ownsHostLease && !prepared)
+    || (!sessionOwned && !selectedHostSessionCode);
+  hostSessionCodeInput.disabled = sessionOwned
+    || sessionStarting
+    || stopping
+    || !scheduleState?.slots?.length;
   stopButton.hidden = !sessionOwned;
   stopButton.textContent = hostSessionState === "prepared" ? "Cancel session" : "End session";
   stopButton.disabled = !ownsHostLease || stopping || hostSessionState === "connecting";
-  sessionTitleInput.disabled = sessionOwned;
   hostBackButton.disabled = sessionOwned;
 }
 
 function updateHostListenerCount(value) {
   hostListenerTotal = Math.max(0, Number(value) || 0);
   hostListenerCount.textContent = String(hostListenerTotal);
-  hostListenerMessage.lastChild.textContent = hostListenerTotal === 1
+  hostListenerLabel.textContent = hostListenerTotal === 1
     ? " listener connected"
     : " listeners connected";
 }
@@ -452,7 +508,7 @@ function showListenerSessionState(state, hostConnected = true, resumeState = "")
   if (state === "prepared") {
     listenerLiveMarker.textContent = "Waiting";
     listenerLiveMarker.dataset.state = "waiting";
-    setListenerStatus("prepared", "Waiting for the host to start.");
+    setListenerStatus("host_ready", "The host is connected. Waiting for the session to start.");
     setSpeakerState("idle", "Speaker microphone off", "Recording has not started.");
     renderLevel(speakerLevel, speakerBars, 0);
     return;
@@ -491,9 +547,7 @@ function applySnapshot(event) {
   const session = event.session || {};
   if (event.role === "host") {
     showHostWorkspace();
-    sessionTitleInput.value = session.title || sessionTitleInput.value;
-    hostJoinCode.textContent = event.join_code || "—";
-    hostSharePanel.hidden = !event.join_code;
+    selectedHostSessionCode = session.session_code || event.join_code || selectedHostSessionCode;
     updateHostListenerCount(session.listener_count || 0);
     englishSegments = Array.isArray(event.english_segments) ? event.english_segments : [];
     partialTranscript = event.partial_english || "";
@@ -505,7 +559,7 @@ function applySnapshot(event) {
     hostSessionState = session.state || "live";
     persistHostState(hostSessionState);
     if (hostSessionState === "prepared") {
-      setHostStatus("prepared", "Share the code, then start when the listener is ready.");
+      setHostStatus("prepared", "Waiting room ready. Start when the listener is connected.");
       setMicrophoneState("idle", "Microphone off", "Recording starts only when you select Start live session.");
     } else {
       setHostStatus(hostSessionState, hostSessionState === "live"
@@ -519,6 +573,7 @@ function applySnapshot(event) {
   } else {
     showListenerWorkspace();
     listenerSessionTitle.textContent = session.title || "Live session";
+    listenerSessionCode.textContent = session.session_code || listenerSessionCode.textContent;
     frenchSegments = Array.isArray(event.french_segments) ? event.french_segments : [];
     translationParagraph = null;
     translationList.replaceChildren(emptyTranslation);
@@ -589,11 +644,11 @@ function persistHostSession(event) {
     session_id: event.session_id,
     resume_token: event.resume_token,
     join_code: event.join_code,
+    session_code: event.session_code || event.join_code,
+    session_label: event.session_label,
     title: event.title,
     state: event.state || "prepared",
   });
-  hostJoinCode.textContent = event.join_code;
-  hostSharePanel.hidden = false;
 }
 
 function persistHostState(state) {
@@ -606,17 +661,20 @@ function handleServerEvent(event) {
   switch (event.type) {
     case "session_prepared":
       persistHostSession({ ...event, state: "prepared" });
+      selectedHostSessionCode = event.session_code || event.join_code;
       ownsHostLease = true;
       hostSessionState = "prepared";
       sessionStarting = false;
       updateHostListenerCount(0);
       broadcastLiveSessionState("reserved");
-      setHostStatus("prepared", "Share the code, then start when the listener is ready.");
+      setHostStatus("prepared", "Waiting room ready. Start when the listener is connected.");
       setMicrophoneState("idle", "Microphone off", "Recording starts only when you select Start live session.");
       updateHostControls();
+      loadSessionSchedule();
       break;
     case "session_snapshot": applySnapshot(event); break;
     case "session_status":
+      updateActiveScheduleStatus(event.state);
       if (currentRole === "host") {
         hostSessionState = event.state;
         persistHostState(hostSessionState);
@@ -632,6 +690,7 @@ function handleServerEvent(event) {
       }
       break;
     case "session_ready":
+      updateActiveScheduleStatus("live");
       if (currentRole === "host" && !stopping) {
         hostSessionState = "live";
         sessionStarting = false;
@@ -653,7 +712,7 @@ function handleServerEvent(event) {
       if (currentRole === "host" && hostSessionState === "prepared") {
         setHostStatus("prepared", hostListenerTotal
           ? "Listener ready. Start when the speaker is ready."
-          : "Share the code, then start when the listener is ready.");
+          : "Waiting for the listener to join this event session.");
       }
       break;
     case "queue_status": if (currentRole === "host") setHostStatus("delayed", event.message); break;
@@ -674,6 +733,15 @@ function handleServerEvent(event) {
       removeSessionValue(HOST_SESSION_KEY);
       broadcastLiveSessionState("inactive");
       if (currentRole === "host") {
+        if (event.archived) {
+          const slots = scheduleState?.slots || [];
+          const currentIndex = slots.findIndex(
+            (slot) => slot.code === selectedHostSessionCode,
+          );
+          if (currentIndex >= 0 && currentIndex < slots.length - 1) {
+            selectedHostSessionCode = slots[currentIndex + 1].code;
+          }
+        }
         releaseAudio().catch(() => {});
         setHostStatus("ended", event.message);
         setMicrophoneState("idle", "Microphone off", event.archived
@@ -691,6 +759,7 @@ function handleServerEvent(event) {
           : "Recording did not start.");
       }
       updateHostControls();
+      loadSessionSchedule();
       break;
     case "session_rejected":
       sessionRejected = true;
@@ -700,8 +769,7 @@ function handleServerEvent(event) {
         setListenerCodeError(event.message);
         joinListenerButton.disabled = false;
       } else {
-        if (["SESSION_TITLE_REQUIRED", "SESSION_TITLE_CONFLICT"].includes(event.code)) setSessionTitleError(event.message);
-        else setHostStatus("unavailable", event.message);
+        setHostStatus("unavailable", event.message);
         ownsHostLease = false;
         hostSessionState = "idle";
         sessionStarting = false;
@@ -823,10 +891,12 @@ async function startHostSession() {
     return;
   }
   if (ownsHostLease || socket) return;
+  if (!selectedHostSessionCode) {
+    setHostStatus("unavailable", "Choose an event session first.");
+    return;
+  }
   sessionStarting = true;
   updateHostControls();
-  const title = await validateSessionTitleForStart();
-  if (!title) { sessionStarting = false; updateHostControls(); return; }
   try {
     const response = await fetch(applicationPath("/api/live-session"), { cache: "no-store" });
     const status = response.ok ? await response.json() : { active: false };
@@ -834,7 +904,7 @@ async function startHostSession() {
     resetHostTranscript();
     setHostStatus("preparing", "Preparing the waiting room...");
     setMicrophoneState("idle", "Microphone off", "Recording starts only when you select Start live session.");
-    connectLiveSocket({ type: "prepare", title });
+    connectLiveSocket({ type: "prepare", session_code: selectedHostSessionCode });
   } catch (error) { handleHostError(error); }
 }
 
@@ -874,6 +944,15 @@ async function stopHostSession() {
     }
     return;
   }
+  endSessionDialogDescription.textContent =
+    `Ending ${selectedHostSessionCode} stops recording and saves this run. `
+    + "The event code remains available if another run is needed.";
+  endSessionDialog.showModal();
+  cancelEndSessionButton.focus();
+}
+
+async function confirmEndHostSession() {
+  endSessionDialog.close();
   setHostStatus("finalizing", "Sending the final audio and translations...");
   setMicrophoneState("connecting", "Microphone stopped", "Finalizing the recording...");
   await releaseAudio();
@@ -881,12 +960,17 @@ async function stopHostSession() {
 }
 
 function joinListener() {
-  const joinCode = normalizeJoinCode(listenerCodeInput.value);
-  listenerCodeInput.value = joinCode;
+  const joinCode = normalizeJoinCode(listenerCodeValue());
+  setListenerCodeValue(joinCode);
   setListenerCodeError();
-  if (joinCode.length !== 7) {
-    setListenerCodeError("Enter the six-character session code.");
-    listenerCodeInput.focus();
+  if (!joinCode) {
+    setListenerCodeError("Enter a session code.");
+    focusListenerCodeInput();
+    return;
+  }
+  if (!/^DAY[12]-(AM|PM)$/.test(joinCode)) {
+    setListenerCodeError("Enter one of the event codes shown above.");
+    focusListenerCodeInput();
     return;
   }
   joinListenerButton.disabled = true;
@@ -1136,9 +1220,7 @@ async function fetchLiveSessionStatus() {
 
 function showStoredHostRecovery(host, autoResumePrepared = false) {
   showHostWorkspace();
-  sessionTitleInput.value = host.title || "Live session";
-  hostJoinCode.textContent = host.join_code || "—";
-  hostSharePanel.hidden = !host.join_code;
+  selectedHostSessionCode = host.session_code || host.join_code || selectedHostSessionCode;
   if (host.state === "prepared") {
     hostSessionState = "prepared";
     setHostStatus("host_reconnecting", autoResumePrepared
@@ -1198,7 +1280,7 @@ async function restoreRole() {
   showLiveSurface(roleEntry);
 }
 
-hostModeButton.addEventListener("click", () => { showHostWorkspace(); updateHostControls(); sessionTitleInput.focus(); });
+hostModeButton.addEventListener("click", () => { showHostWorkspace(); updateHostControls(); startButton.focus(); });
 listenerModeButton.addEventListener("click", showListenerJoin);
 hostBackButton.addEventListener("click", showRoleEntry);
 listenerBackButton.addEventListener("click", showRoleEntry);
@@ -1206,17 +1288,58 @@ leaveListenerButton.addEventListener("click", leaveListenerSession);
 startButton.addEventListener("click", startHostSession);
 stopButton.addEventListener("click", stopHostSession);
 joinListenerButton.addEventListener("click", joinListener);
-sessionTitleInput.addEventListener("input", () => { if (sessionTitleInput.value.trim()) setSessionTitleError(); });
-listenerCodeInput.addEventListener("input", () => { listenerCodeInput.value = normalizeJoinCode(listenerCodeInput.value); setListenerCodeError(); });
-listenerCodeInput.addEventListener("keydown", (event) => {
-  if (event.key === "Enter" && !joinListenerButton.disabled) joinListener();
+listenerCodeInputs.forEach((input, inputIndex) => {
+  input.addEventListener("input", () => {
+    const characters = input.value.toUpperCase().replace(/[^A-Z0-9]/g, "");
+    if (characters.length > 1) {
+      const current = listenerCodeInputs.map((candidate) => candidate.value);
+      characters.split("").forEach((character, offset) => {
+        if (listenerCodeInputs[inputIndex + offset]) current[inputIndex + offset] = character;
+      });
+      setListenerCodeValue(current.join(""));
+    } else {
+      input.value = characters;
+    }
+    setListenerCodeError();
+    if (input.value && listenerCodeInputs[inputIndex + 1]) {
+      listenerCodeInputs[inputIndex + 1].focus();
+    }
+  });
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && !joinListenerButton.disabled) {
+      joinListener();
+      return;
+    }
+    if (event.key === "Backspace" && !input.value && listenerCodeInputs[inputIndex - 1]) {
+      listenerCodeInputs[inputIndex - 1].focus();
+      listenerCodeInputs[inputIndex - 1].value = "";
+      event.preventDefault();
+      return;
+    }
+    if (event.key === "ArrowLeft" && listenerCodeInputs[inputIndex - 1]) {
+      listenerCodeInputs[inputIndex - 1].focus();
+      event.preventDefault();
+      return;
+    }
+    if (event.key === "ArrowRight" && listenerCodeInputs[inputIndex + 1]) {
+      listenerCodeInputs[inputIndex + 1].focus();
+      event.preventDefault();
+    }
+  });
+  input.addEventListener("paste", (event) => {
+    const pastedCode = event.clipboardData?.getData("text") || "";
+    const characters = pastedCode.toUpperCase().replace(/[^A-Z0-9]/g, "");
+    if (!characters) return;
+    event.preventDefault();
+    setListenerCodeValue(characters);
+    setListenerCodeError();
+    focusListenerCodeInput();
+  });
 });
-copyJoinCodeButton.addEventListener("click", async () => {
-  const code = hostJoinCode.textContent;
-  if (!code || code === "—") return;
-  await navigator.clipboard.writeText(code);
-  copyJoinCodeButton.textContent = "Code copied";
-  setTimeout(() => { copyJoinCodeButton.textContent = "Copy code"; }, 1500);
+hostSessionCodeInput.addEventListener("change", () => {
+  selectedHostSessionCode = normalizeJoinCode(hostSessionCodeInput.value);
+  setHostStatus("idle", `Ready to prepare ${selectedHostSessionCode}.`);
+  updateHostControls();
 });
 cancelStartWithoutListenerButton.addEventListener("click", () => startWithoutListenerDialog.close());
 confirmStartWithoutListenerButton.addEventListener("click", () => {
@@ -1224,6 +1347,16 @@ confirmStartWithoutListenerButton.addEventListener("click", () => {
   activatePreparedSession();
 });
 startWithoutListenerDialog.addEventListener("cancel", () => cancelStartWithoutListenerButton.focus());
+cancelEndSessionButton.addEventListener("click", () => {
+  endSessionDialog.close();
+  stopping = false;
+  updateHostControls();
+});
+confirmEndSessionButton.addEventListener("click", confirmEndHostSession);
+endSessionDialog.addEventListener("cancel", () => {
+  stopping = false;
+  updateHostControls();
+});
 refreshSessionsButton.addEventListener("click", () => loadSessions());
 deleteSessionButton.addEventListener("click", openDeleteSessionDialog);
 cancelDeleteSessionButton.addEventListener("click", () => deleteSessionDialog.close());
@@ -1236,5 +1369,7 @@ savedAudio.addEventListener("ended", () => { archivePlaybackClaim = null; });
 resetHostTranscript();
 resetListenerTranscript();
 restoreActiveView();
-restoreRole().catch(showRoleEntry);
 updateHostControls();
+loadSessionSchedule()
+  .catch(() => {})
+  .finally(() => restoreRole().catch(showRoleEntry));

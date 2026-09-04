@@ -224,6 +224,17 @@ def process_http_request(
             LIVE_SESSION_MANAGER.status(),
         )
 
+    if path == "/api/session-slots":
+        if request.method != "GET":
+            return json_response(
+                HTTPStatus.METHOD_NOT_ALLOWED,
+                {"message": "Only GET is supported for scheduled sessions."},
+            )
+        return json_response(
+            HTTPStatus.OK,
+            LIVE_SESSION_MANAGER.schedule(),
+        )
+
     api_response = session_api_response(request, path)
     if api_response is not None:
         return api_response
@@ -336,6 +347,7 @@ async def handle_live_session(websocket: ServerConnection) -> None:
             managed = await LIVE_SESSION_MANAGER.prepare_host(
                 command.get("title"),
                 subscriber,
+                command.get("session_code"),
             )
             log_event(
                 LOGGER,

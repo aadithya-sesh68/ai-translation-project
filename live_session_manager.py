@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import os
 import secrets
-import string
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
@@ -22,6 +21,13 @@ from session_store import (
     utc_now,
     validate_new_session_title,
 )
+from session_schedule import (
+    SESSION_SLOT_BY_CODE,
+    SESSION_SLOTS,
+    SessionCodeCatalog,
+    SessionSlot,
+    normalize_session_code,
+)
 
 
 BrowserRole = Literal["host", "listener"]
@@ -32,8 +38,11 @@ SettingsFactory = Callable[[], OciSpeechSettings]
 TitleValidator = Callable[[Any], str]
 
 LIVE_SESSION_ACTIVE_MESSAGE = "Another OraTranslate session is already active."
-INVALID_JOIN_CODE_MESSAGE = "The session code is invalid or has expired."
+INVALID_JOIN_CODE_MESSAGE = "The event session code isn't recognized."
 HOST_ALREADY_CONNECTED_MESSAGE = "The host session is already open in another browser."
+SESSION_NOT_ACTIVE_MESSAGE = (
+    "No OraTranslate session is ready yet. Ask the host to prepare one."
+)
 
 
 class LiveSessionError(RuntimeError):
@@ -53,15 +62,8 @@ class BrowserSubscriber:
     subscriber_id: str = field(default_factory=lambda: uuid.uuid4().hex)
 
 
-def _join_code() -> str:
-    alphabet = string.ascii_uppercase + string.digits
-    raw = "".join(secrets.choice(alphabet) for _ in range(6))
-    return f"{raw[:3]}-{raw[3:]}"
-
-
 def normalize_join_code(value: Any) -> str:
-    raw = "".join(character for character in str(value or "").upper() if character.isalnum())
-    return f"{raw[:3]}-{raw[3:]}" if len(raw) == 6 else raw
+    return normalize_session_code(value)
 
 
 class ManagedLiveSession:
@@ -72,6 +74,7 @@ class ManagedLiveSession:
         manager: "LiveSessionManager",
         session_id: str,
         title: str,
+        session_slot: SessionSlot,
         host: BrowserSubscriber,
         audio_queue_size: int,
     ) -> None:
@@ -79,7 +82,8 @@ class ManagedLiveSession:
         self.archive: SessionArchive | None = None
         self.session_id = session_id
         self.title = title
-        self.join_code = _join_code()
+        self.session_slot = session_slot
+        self.join_code = session_slot.code
         self.host_token = secrets.token_urlsafe(32)
         self.state = "prepared"
         self.resume_state = "prepared"
@@ -123,6 +127,8 @@ class ManagedLiveSession:
             "session": {
                 "session_id": self.session_id,
                 "title": self.title,
+                "session_code": self.session_slot.code,
+                "session_label": self.session_slot.label,
                 "state": self.state,
                 "resume_state": self.resume_state,
                 "listener_count": self.listener_count,
@@ -345,7 +351,7 @@ class ManagedLiveSession:
                         except asyncio.QueueEmpty:
                             break
                     subscriber.queue.put_nowait(None)
-            await self.manager.session_finished(self)
+            await self.manager.session_finished(self, status, saved_session)
             return saved_session
 
     async def close_without_archive(self, reason: str, message: str) -> None:
@@ -383,7 +389,7 @@ class ManagedLiveSession:
                         except asyncio.QueueEmpty:
                             break
                     subscriber.queue.put_nowait(None)
-            await self.manager.session_finished(self)
+            await self.manager.session_finished(self, reason, None)
 
 
 class LiveSessionManager:
@@ -396,6 +402,7 @@ class LiveSessionManager:
         settings_factory: SettingsFactory = OciSpeechSettings.from_environment,
         session_factory: SessionFactory = SpeechTranslationSession,
         title_validator: TitleValidator = validate_new_session_title,
+        session_catalog: SessionCodeCatalog | None = None,
         reconnect_grace_seconds: float | None = None,
         prepared_timeout_seconds: float | None = None,
         audio_queue_size: int | None = None,
@@ -405,6 +412,7 @@ class LiveSessionManager:
         self.settings_factory = settings_factory
         self.session_factory = session_factory
         self.title_validator = title_validator
+        self.session_catalog = session_catalog or SessionCodeCatalog()
         self.reconnect_grace_seconds = (
             reconnect_grace_seconds
             if reconnect_grace_seconds is not None
@@ -439,17 +447,26 @@ class LiveSessionManager:
 
     def status(self) -> Event:
         current = self.current
-        if not current:
+        if not current or not self.active:
             return {"active": False, "state": "idle"}
         return {
             "active": True,
             "state": current.state,
             "session_id": current.session_id,
             "title": current.title,
+            "session_code": current.session_slot.code,
+            "session_label": current.session_slot.label,
             "host_connected": current.host_connected,
             "listener_count": current.listener_count,
             "resume_state": current.resume_state,
         }
+
+    def schedule(self) -> Event:
+        current = self.current if self.active else None
+        return self.session_catalog.snapshot(
+            active_code=current.session_slot.code if current else None,
+            active_state=current.state if current else None,
+        )
 
     def subscriber(self, role: BrowserRole) -> BrowserSubscriber:
         return BrowserSubscriber(
@@ -461,6 +478,7 @@ class LiveSessionManager:
         self,
         title: Any,
         subscriber: BrowserSubscriber,
+        session_code: Any = None,
     ) -> ManagedLiveSession:
         async with self._create_lock:
             if self.active:
@@ -469,11 +487,25 @@ class LiveSessionManager:
                     LIVE_SESSION_ACTIVE_MESSAGE,
                 )
             prepared_at = utc_now()
-            validated_title = self.title_validator(title)
+            requested_code = normalize_session_code(
+                session_code or SESSION_SLOTS[0].code
+            )
+            if requested_code not in SESSION_SLOT_BY_CODE:
+                raise LiveSessionError(
+                    "INVALID_JOIN_CODE",
+                    INVALID_JOIN_CODE_MESSAGE,
+                )
+            selected_slot = SESSION_SLOT_BY_CODE[requested_code]
+            validated_title = (
+                f"{selected_slot.code} — {selected_slot.label}"
+                if not isinstance(title, str) or not title.strip()
+                else self.title_validator(title)
+            )
             managed = ManagedLiveSession(
                 self,
                 create_session_id(prepared_at),
                 validated_title,
+                selected_slot,
                 subscriber,
                 self.audio_queue_size,
             )
@@ -485,6 +517,8 @@ class LiveSessionManager:
                     "session_id": managed.session_id,
                     "title": managed.title,
                     "join_code": managed.join_code,
+                    "session_code": managed.session_slot.code,
+                    "session_label": managed.session_slot.label,
                     "resume_token": managed.host_token,
                 },
             )
@@ -492,9 +526,17 @@ class LiveSessionManager:
                 {
                     "type": "session_status",
                     "state": "prepared",
-                    "message": "Share the code, then start when the listener is ready.",
+                    "message": "Waiting room ready. Start when the listener is connected.",
                 }
             )
+            if managed.listener_count:
+                managed.publish(
+                    {
+                        "type": "listener_count",
+                        "count": managed.listener_count,
+                    },
+                    roles={"host"},
+                )
             managed.prepared_expiry_task = asyncio.create_task(
                 self._expire_prepared_session(managed)
             )
@@ -526,6 +568,8 @@ class LiveSessionManager:
                 managed.title,
                 session_id=managed.session_id,
                 started_at=utc_now(),
+                session_code=managed.session_slot.code,
+                session_label=managed.session_slot.label,
             )
             managed.publish(
                 {
@@ -573,10 +617,11 @@ class LiveSessionManager:
         self,
         title: Any,
         subscriber: BrowserSubscriber,
+        session_code: Any = None,
     ) -> ManagedLiveSession:
         """Backward-compatible helper that prepares and immediately activates."""
 
-        managed = await self.prepare_host(title, subscriber)
+        managed = await self.prepare_host(title, subscriber, session_code)
         return await self.activate_host(subscriber.subscriber_id)
 
     async def resume_host(
@@ -620,7 +665,7 @@ class LiveSessionManager:
                 "type": "session_status",
                 "state": current.state,
                 "message": (
-                    "The waiting room is ready. Share the code, then start when the listener is ready."
+                    "The waiting room is ready. Start when the listener is connected."
                     if current.state == "prepared"
                     else (
                         "The host reconnected. Live captions have resumed."
@@ -637,20 +682,35 @@ class LiveSessionManager:
         join_code: Any,
         subscriber: BrowserSubscriber,
     ) -> ManagedLiveSession:
+        normalized_code = normalize_join_code(join_code)
+        if normalized_code not in SESSION_SLOT_BY_CODE:
+            raise LiveSessionError(
+                "INVALID_JOIN_CODE",
+                INVALID_JOIN_CODE_MESSAGE,
+            )
         current = self.current
-        if (
-            not current
-            or normalize_join_code(join_code) != current.join_code
-            or current.state not in {
+        if not current:
+            raise LiveSessionError(
+                "SESSION_NOT_ACTIVE",
+                SESSION_NOT_ACTIVE_MESSAGE,
+            )
+        if normalized_code != current.join_code:
+            raise LiveSessionError(
+                "SESSION_CODE_MISMATCH",
+                (
+                    f"{normalized_code} isn't active. "
+                    f"The host prepared {current.join_code}."
+                ),
+            )
+        if current.state not in {
                 "prepared",
                 "connecting",
                 "live",
                 "host_reconnecting",
-            }
-        ):
+            }:
             raise LiveSessionError(
-                "INVALID_JOIN_CODE",
-                INVALID_JOIN_CODE_MESSAGE,
+                "SESSION_NOT_ACTIVE",
+                SESSION_NOT_ACTIVE_MESSAGE,
             )
         current.subscribers[subscriber.subscriber_id] = subscriber
         current.send_to(subscriber, current.snapshot("listener"))
@@ -785,6 +845,11 @@ class LiveSessionManager:
             )
         return await current.finalize_task
 
-    async def session_finished(self, managed: ManagedLiveSession) -> None:
+    async def session_finished(
+        self,
+        managed: ManagedLiveSession,
+        status: str,
+        saved_session: dict[str, Any] | None,
+    ) -> None:
         if self.current is managed:
             self.current = None

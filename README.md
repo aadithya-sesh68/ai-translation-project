@@ -18,9 +18,13 @@ python speech_web_server.py
 ```
 
 Then open <http://localhost:8765> in Edge or Chrome. On the dedicated speaker
-device, choose **Host the session**, enter a required unique session name,
-select **Prepare session**, and share the generated six-character listener
-code. On the client device, choose **Join as a listener** and enter that code.
+device, choose **Host the session**, select the relevant event code, and prepare
+its waiting room.
+The four listener codes are fixed event labels: `DAY1-AM`, `DAY1-PM`,
+`DAY2-AM`, and `DAY2-PM`. The server automatically names each archive from
+its slot and run number, such as `September 15 Morning · Part 1`. On the client
+device, choose **Join as a listener** and enter the matching event code shown on
+the join screen.
 When the listener is ready, the host selects **Start live session** and allows
 microphone access. The host selects **End session** to flush the final segment
 and save the outputs. Preparing or cancelling a waiting room creates no
@@ -115,10 +119,13 @@ connection isn't yet implemented.
 ## Request flow
 
 1. The entry view asks whether the device is the session host or a listener.
-2. **Prepare session** creates a server-owned waiting room, private host resume
-   token, and public listener code without creating an archive or OCI clients.
-3. A listener joins with the public code and waits without requesting
-   microphone access.
+2. The host selects a fixed event code. **Prepare session** opens a
+   server-owned waiting room and creates a private host resume token without
+   creating an archive or OCI clients.
+3. The listener enters the matching fixed event code shown on the join screen
+   and joins without requesting microphone access. A missing, unknown,
+   inactive, or different code is rejected, with the active code identified
+   when appropriate.
 4. **Start live session** requests host microphone permission and atomically
    initializes the archive, bounded audio queue, OCI signers, Speech session,
    and Language client.
@@ -131,8 +138,8 @@ connection isn't yet implemented.
    Language translation.
 9. French results are published to listener browser queues. Server snapshots
    restore the appropriate complete transcript when either role reconnects.
-10. **End session** flushes remaining audio, requests the final Speech result,
-   and completes queued translations.
+10. **End session** requires confirmation, flushes remaining audio, requests
+   the final Speech result, and completes queued translations.
 11. The server closes the MP3 recording and saves English, French, metadata,
    safe OCI error details, and an operational session report in a
    session-specific folder.
@@ -154,6 +161,14 @@ private token. If the host doesn't return, the server finalizes the session as
 `interrupted`. A listener refresh automatically rejoins with its saved code and
 receives the French transcript from the beginning.
 
+The four event codes are reusable labels rather than one-time schedule locks.
+Ending a session saves an independently identified archive but leaves its code
+available for another run. The host explicitly chooses the appropriate event
+block each time, while the listener UI exposes only the code currently prepared
+or live. The server rejects a mismatched listener code and identifies the active
+code. An older `_schedule_state.json` file may remain in the storage directory
+after upgrading, but the application no longer reads or writes it.
+
 Completed outputs persist on the server under `recorded_sessions` by default:
 
 ```text
@@ -171,9 +186,10 @@ transcript counts, total/successful/failed Language requests, HTTP status and
 OCI code counts, minimum/average/median/maximum translation latency, total error
 counts, and the first and last error. `diagnostics.json` still retains at most
 100 detailed errors, while the report continues counting every error and states
-how many detailed entries were omitted. The saved-session viewer provides a
-**Download session report** link for newly completed sessions. Sessions saved by
-older application versions don't have a report and keep their existing outputs.
+how many detailed entries were omitted. The report remains available on the
+server for internal diagnostics but isn't exposed as a customer-facing download.
+Sessions saved by older application versions don't have a report and keep their
+existing outputs.
 
 The MP3 is encoded directly from the same 16 kHz mono PCM stream sent to OCI
 Speech. If the host remains disconnected beyond the recovery window without

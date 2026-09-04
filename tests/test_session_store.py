@@ -135,11 +135,97 @@ class SessionStoreTest(unittest.TestCase):
             self.root,
             session_id=session_id,
             started_at=started_at,
+            session_code="DAY1-AM",
+            session_label="Day 1 morning",
         )
         metadata = archive.finalize("completed")
 
         self.assertEqual(session_id, metadata["session_id"])
         self.assertEqual("2026-09-03T09:15:00Z", metadata["started_at"])
+        self.assertEqual("DAY1-AM", metadata["session_code"])
+        self.assertEqual("Day 1 morning", metadata["session_label"])
+        self.assertEqual(1, metadata["session_part"])
+        self.assertEqual("Day 1 morning · Part 1", metadata["title"])
+
+    def test_scheduled_slot_retry_numbers_each_saved_part(self) -> None:
+        first = SessionArchive(
+            "DAY1-AM — Day 1 morning",
+            self.root,
+            session_id="20260903T090000Z-11111111",
+            session_code="DAY1-AM",
+            session_label="Day 1 morning",
+        )
+        first_metadata = first.finalize("interrupted")
+
+        retry = SessionArchive(
+            "DAY1-AM — Day 1 morning",
+            self.root,
+            session_id="20260903T091000Z-22222222",
+            session_code="DAY1-AM",
+            session_label="Day 1 morning",
+        )
+        metadata = retry.finalize("completed")
+
+        self.assertEqual(
+            "Day 1 morning · Part 1",
+            first_metadata["title"],
+        )
+        self.assertEqual(1, first_metadata["session_part"])
+        self.assertEqual(
+            "Day 1 morning · Part 2",
+            metadata["title"],
+        )
+        self.assertEqual(2, metadata["session_part"])
+        self.assertEqual(2, len(list_sessions(self.root)))
+
+    def test_scheduled_slot_part_number_is_not_reused_after_deletion(self) -> None:
+        first = SessionArchive(
+            "DAY1-AM — Day 1 morning",
+            self.root,
+            session_id="20260903T090000Z-11111111",
+            session_code="DAY1-AM",
+            session_label="Day 1 morning",
+        )
+        first.finalize("completed")
+        second = SessionArchive(
+            "DAY1-AM — Day 1 morning",
+            self.root,
+            session_id="20260903T100000Z-22222222",
+            session_code="DAY1-AM",
+            session_label="Day 1 morning",
+        )
+        second.finalize("completed")
+        (self.root / first.session_id / "metadata.json").unlink()
+
+        third = SessionArchive(
+            "DAY1-AM — Day 1 morning",
+            self.root,
+            session_id="20260903T110000Z-33333333",
+            session_code="DAY1-AM",
+            session_label="Day 1 morning",
+        )
+        metadata = third.finalize("completed")
+
+        self.assertEqual(3, metadata["session_part"])
+        self.assertEqual(
+            "Day 1 morning · Part 3",
+            metadata["title"],
+        )
+
+    def test_scheduled_archive_title_uses_compact_event_label(self) -> None:
+        archive = SessionArchive(
+            "DAY1-AM — September 15 · Morning",
+            self.root,
+            session_id="20260915T083000Z-44444444",
+            session_code="DAY1-AM",
+            session_label="September 15 · Morning",
+        )
+
+        metadata = archive.finalize("completed")
+
+        self.assertEqual("September 15 Morning · Part 1", metadata["title"])
+        self.assertEqual("DAY1-AM", metadata["session_code"])
+        self.assertEqual("September 15 · Morning", metadata["session_label"])
 
     def test_session_list_api_returns_public_urls(self) -> None:
         metadata = self.create_saved_session()

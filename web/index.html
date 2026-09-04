@@ -85,19 +85,19 @@
                           <h3 id="session-details-heading">Host session</h3>
                           <button id="host-back-button" class="text-action" type="button">Change role</button>
                         </div>
+                        <section class="schedule-summary">
+                          <label for="host-session-code">Session</label>
+                          <select id="host-session-code" class="join-code-input" disabled>
+                            <option value="">Loading event sessions…</option>
+                          </select>
+                        </section>
                         <section class="session-controls" aria-label="Host controls">
-                          <label for="session-title">Session name</label>
-                          <input id="session-title" type="text" maxlength="120" placeholder="Customer enablement session" aria-describedby="session-title-message" required />
-                          <div class="session-field-assistance">
-                            <p id="session-title-message" class="field-message" aria-live="polite" hidden></p>
-                            <span class="required-message">Required</span>
-                          </div>
                           <div class="controls">
                             <button id="start-button" class="btn btn--primary primary" type="button">Prepare session</button>
                             <button id="stop-button" class="btn btn--secondary" type="button" disabled hidden>Cancel session</button>
                           </div>
                         </section>
-                        <div class="session-feedback">
+                        <div class="session-feedback host-session-feedback">
                           <section class="status-panel" aria-live="polite">
                             <div class="status-line">
                               <span id="status-badge" data-state="idle">idle</span>
@@ -117,12 +117,10 @@
                               <span></span><span></span><span></span><span></span><span></span><span></span>
                             </div>
                           </section>
-                          <section id="host-share-panel" class="share-panel" hidden>
-                            <span>Listener code</span>
-                            <strong id="host-join-code">—</strong>
-                            <button id="copy-join-code" class="btn btn--secondary btn--block" type="button">Copy code</button>
-                            <p id="host-listener-message"><span id="host-listener-count">0</span> listeners connected</p>
-                          </section>
+                          <p id="host-listener-message" class="listener-presence">
+                            <strong id="host-listener-count">0</strong>
+                            <span id="host-listener-label"> listeners connected</span>
+                          </p>
                         </div>
                       </aside>
                       <div class="live-item-overview__content">
@@ -145,9 +143,32 @@
                       <button id="listener-back-button" class="text-action" type="button">Change role</button>
                       <span class="section-accent" aria-hidden="true"></span>
                       <h2 id="listener-join-heading">Join the live session</h2>
-                      <p>Ask the host for the six-character listener code.</p>
-                      <label for="listener-code">Session code</label>
-                      <input id="listener-code" class="join-code-input" type="text" inputmode="text" autocomplete="off" maxlength="7" placeholder="ABC-123" aria-describedby="listener-code-message" />
+                      <p>Enter the code for the session you want to join.</p>
+                      <div id="listener-code-guidance" class="event-code-reference">
+                        <p class="event-code-reference__heading">Event codes</p>
+                        <p>September 15: <strong>DAY1-AM</strong> or <strong>DAY1-PM</strong></p>
+                        <p>September 16: <strong>DAY2-AM</strong> or <strong>DAY2-PM</strong></p>
+                      </div>
+                      <span id="listener-code-label" class="field-label">Session code</span>
+                      <div
+                        id="listener-code"
+                        class="join-code-entry"
+                        role="group"
+                        aria-labelledby="listener-code-label"
+                        aria-describedby="listener-code-guidance listener-code-message"
+                      >
+                        <div class="join-code-segment" role="group" aria-label="Day code">
+                          <input class="join-code-character" data-code-index="0" type="text" inputmode="text" maxlength="1" autocomplete="off" autocapitalize="characters" spellcheck="false" aria-label="Session code character 1" />
+                          <input class="join-code-character" data-code-index="1" type="text" inputmode="text" maxlength="1" autocomplete="off" autocapitalize="characters" spellcheck="false" aria-label="Session code character 2" />
+                          <input class="join-code-character" data-code-index="2" type="text" inputmode="text" maxlength="1" autocomplete="off" autocapitalize="characters" spellcheck="false" aria-label="Session code character 3" />
+                          <input class="join-code-character" data-code-index="3" type="text" inputmode="text" maxlength="1" autocomplete="off" autocapitalize="characters" spellcheck="false" aria-label="Session code character 4" />
+                        </div>
+                        <span class="join-code-separator" aria-hidden="true">–</span>
+                        <div class="join-code-segment join-code-segment--period" role="group" aria-label="Time code">
+                          <input class="join-code-character" data-code-index="4" type="text" inputmode="text" maxlength="1" autocomplete="off" autocapitalize="characters" spellcheck="false" aria-label="Session code character 5" />
+                          <input class="join-code-character" data-code-index="5" type="text" inputmode="text" maxlength="1" autocomplete="off" autocapitalize="characters" spellcheck="false" aria-label="Session code character 6" />
+                        </div>
+                      </div>
                       <p id="listener-code-message" class="field-message" role="alert" aria-live="polite" aria-atomic="true" hidden></p>
                       <button id="join-listener-button" class="btn btn--primary btn--block" type="button">Join session</button>
                     </div>
@@ -377,6 +398,33 @@
             type="button"
           >
             Start anyway
+          </button>
+        </footer>
+      </div>
+    </dialog>
+
+    <dialog
+      id="end-session-dialog"
+      class="rdw-dialog"
+      aria-labelledby="end-session-dialog-title"
+      aria-describedby="end-session-dialog-description"
+    >
+      <div class="rdw-dialog__surface">
+        <header class="rdw-dialog__header">
+          <h2 id="end-session-dialog-title">End this event session?</h2>
+        </header>
+        <div class="rdw-dialog__body">
+          <p id="end-session-dialog-description">
+            This stops recording and saves this run. The event code remains
+            available if another run is needed.
+          </p>
+        </div>
+        <footer class="rdw-dialog__footer">
+          <button id="cancel-end-session" class="btn btn--secondary" type="button">
+            Keep session live
+          </button>
+          <button id="confirm-end-session" class="btn btn--danger-solid" type="button">
+            End and save
           </button>
         </footer>
       </div>

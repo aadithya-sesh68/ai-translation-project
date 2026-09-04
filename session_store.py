@@ -94,6 +94,38 @@ def create_session_id(started_at: datetime) -> str:
     return f"{timestamp}-{uuid.uuid4().hex[:8]}"
 
 
+def next_session_part(session_code: str, root: Path | None = None) -> int:
+    """Return the next persistent run number for a reusable event code."""
+
+    matching_sessions = [
+        session
+        for session in list_sessions(root)
+        if session.get("session_code") == session_code
+    ]
+    highest_saved_part = max(
+        (
+            part
+            for session in matching_sessions
+            if isinstance((part := session.get("session_part")), int)
+            and not isinstance(part, bool)
+            and part > 0
+        ),
+        default=0,
+    )
+    # Older scheduled archives don't contain session_part. Counting matching
+    # records keeps the next number beyond those legacy runs.
+    return max(highest_saved_part, len(matching_sessions)) + 1
+
+
+def scheduled_archive_title(value: Any, session_part: int) -> str:
+    """Build a compact archive title from a scheduled event label."""
+
+    suffix = f" · Part {session_part}"
+    base_title = clean_title(value).replace(" · ", " ")
+    base_title = base_title[: MAX_TITLE_LENGTH - len(suffix)].rstrip()
+    return f"{base_title}{suffix}"
+
+
 def _write_json(path: Path, payload: Any) -> None:
     temporary_path = path.with_suffix(f"{path.suffix}.tmp")
     temporary_path.write_text(
@@ -155,6 +187,8 @@ class SessionArchive:
         *,
         session_id: str | None = None,
         started_at: datetime | None = None,
+        session_code: str | None = None,
+        session_label: str | None = None,
     ):
         self.started_at = started_at or utc_now()
         self.session_id = (
@@ -163,7 +197,16 @@ class SessionArchive:
             else create_session_id(self.started_at)
         )
         self.root = (root or session_storage_root()).resolve()
-        self.title = validate_new_session_title(title, self.root)
+        self.session_code = session_code
+        self.session_label = session_label
+        self.session_part = (
+            next_session_part(session_code, self.root) if session_code else None
+        )
+        self.title = (
+            scheduled_archive_title(session_label or title, self.session_part)
+            if self.session_part is not None
+            else validate_new_session_title(title, self.root)
+        )
         self.directory = self.root / self.session_id
         self.directory.mkdir(parents=True, exist_ok=False)
 
@@ -298,6 +341,9 @@ class SessionArchive:
             "schema_version": 1,
             "session_id": self.session_id,
             "title": self.title,
+            "session_code": self.session_code,
+            "session_label": self.session_label,
+            "session_part": self.session_part,
             "session_status": status,
             "started_at": utc_string(self.started_at),
             "ended_at": utc_string(ended_at),
@@ -375,6 +421,9 @@ class SessionArchive:
         metadata = {
             "session_id": self.session_id,
             "title": self.title,
+            "session_code": self.session_code,
+            "session_label": self.session_label,
+            "session_part": self.session_part,
             "status": status,
             "started_at": utc_string(self.started_at),
             "ended_at": utc_string(ended_at),
